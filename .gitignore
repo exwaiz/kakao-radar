@@ -1,0 +1,10 @@
+.gradle/
+__pycache__/
+*.pyc
+**/build/
+local.properties
+*.jks
+*.keystore
+captures/
+*.jsonl
+!**/fixtures/*.jsonl

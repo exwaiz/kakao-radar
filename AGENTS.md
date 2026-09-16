@@ -32,6 +32,10 @@
 - 새로운 실기기 결과나 architecture decision이 나오면 같은 작업에서 `DEBUG_NOTES.md` 또는 `DECISIONS.md`를 갱신한다.
 - 테스트가 통과했다는 사실을 실기기 수집 성공으로 표현하지 않는다.
 
+## Build note
+
+GitHub connector로 가져온 저장소에는 바이너리 `android/gradle/wrapper/gradle-wrapper.jar`가 포함되지 않을 수 있다. 파일이 없으면 빌드 전에 설치된 Gradle로 `gradle wrapper --gradle-version 8.9`를 실행해 wrapper를 재생성한다. `gradle-wrapper.properties`와 wrapper 스크립트는 저장소에 있다.
+
 ## Session hygiene
 
 같은 버그를 수정하고 빌드/로그를 반복하는 동안은 같은 Codex 세션을 사용한다. milestone 또는 독립 기능이 끝나면 결정과 결과를 Markdown에 저장하고 다음 작업은 새 세션으로 시작한다. 과거 장문 채팅을 영구 컨텍스트처럼 유지하지 않는다.
