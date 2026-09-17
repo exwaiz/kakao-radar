@@ -24,17 +24,28 @@ class CollectorService : NotificationListenerService() {
         val roomAtArrival = app.config.roomId
         app.io.execute {
             try {
-                val parsed = NotificationParser.parse(sbn)
-                if (parsed == null) {
-                    app.db.dao().diagnostic(Diagnostic(at = at, code = "unsupported_kakao_callbacks"))
-                } else {
-                    app.config.discover(parsed.room)
-                    if (capture && enabledAtArrival && roomAtArrival == app.config.roomId) app.capture(parsed, at)
+                val dao = app.db.dao()
+                dao.diagnostic(Diagnostic(at = at, code = if (capture) "kakao_callbacks" else "discovery_snapshots"))
+                val result = NotificationParser.parse(sbn)
+                when (result) {
+                    is ParseResult.Unsupported -> dao.diagnostic(Diagnostic(at = at, code = "unsupported_${result.reason.name.lowercase()}"))
+                    is ParseResult.Success -> {
+                        dao.diagnostic(Diagnostic(at = at, code = if (capture) "parsed_callbacks" else "parsed_snapshots"))
+                        dao.diagnostic(Diagnostic(at = at, code = "method_${result.notification.method}"))
+                        app.config.discover(result.notification.room)
+                        if (capture && enabledAtArrival && roomAtArrival == app.config.roomId) app.capture(result.notification, at)
+                    }
+                }
+                runCatching {
+                    dao.structure(NotificationStructure(at = at, source = if (capture) "callback" else "discovery",
+                        payload = NotificationParser.structure(sbn, result, app.config::alias)))
+                    dao.pruneStructures(at - 72L * 60 * 60 * 1000)
                 }
                 app.pruneIfDue()
             } catch (_: Exception) {
                 // Never log notification payloads or exception messages containing chat content.
                 app.config.error = "수집 처리 실패 · 저장 공간과 권한을 확인해 주세요"
+                runCatching { app.db.dao().diagnostic(Diagnostic(at = at, code = "processing_errors")) }
             }
         }
     }

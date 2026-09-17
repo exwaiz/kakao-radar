@@ -29,10 +29,12 @@ class CollectorFlowTest {
             app.capture(first, now)
             app.capture(first, now + 1)
             assertEquals(1, app.db.dao().count())
+            assertEquals(1, app.db.dao().queueCount("pending"))
             assertFalse(app.db.dao().snapshot(app.config.roomId)!!.payload.contains("hello secret"))
             val second = first.copy(messages = first.messages + ObservedMessage("닉네임", "hello secret", now + 2))
-            app.capture(second, now + 2)
+            app.capture(second.copy(room = room.copy(title="updated display title",key="updated key")), now + 2)
             assertEquals(2, app.db.dao().count())
+            assertEquals(2, app.db.dao().queueCount("pending"))
             app.config.enabled = false
             app.capture(second.copy(messages = second.messages + ObservedMessage("닉네임", "paused", now + 3)), now + 3)
             assertEquals(2, app.db.dao().count())

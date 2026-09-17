@@ -18,22 +18,30 @@ class RadarApp : Application() {
     val io = Executors.newSingleThreadExecutor()
     lateinit var db: RadarDatabase
     lateinit var config: Config
+    lateinit var syncSettings: SyncSettings
+    val syncLock = Any()
     @Volatile var listenerConnected = false
     private var lastPruned = 0L
     override fun onCreate() {
         super.onCreate()
         config = Config(this)
-        db = Room.databaseBuilder(this, RadarDatabase::class.java, "radar.db").build()
+        syncSettings = SyncSettings(this)
+        db = Room.databaseBuilder(this, RadarDatabase::class.java, "radar.db")
+            .addMigrations(RadarDatabase.MIGRATION_1_2, RadarDatabase.MIGRATION_2_3).build()
         io.execute { runCatching { prune() }.onFailure { config.error = "저장소 정리 실패" } }
+        if (syncSettings.enabled) SyncScheduler.schedule(this)
     }
 
     fun prune() {
         val cutoff = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
         db.runInTransaction {
+            val expired = db.dao().expiredPending(cutoff)
+            if (expired > 0) db.dao().diagnostic(Diagnostic(at = System.currentTimeMillis(), code = "expired_unsent", value = expired))
             db.dao().pruneMessages(cutoff)
             db.dao().pruneSnapshots(cutoff)
             db.dao().pruneDiagnostics(cutoff)
             db.dao().trimDiagnostics()
+            db.dao().pruneStructures(System.currentTimeMillis() - 72L * 60 * 60 * 1000)
         }
         lastPruned = System.currentTimeMillis()
     }
@@ -46,6 +54,11 @@ class RadarApp : Application() {
         if (!config.enabled) return
         val binding = config.binding ?: return
         if (!binding.matches(parsed.room)) return
+        if (binding.shortcut.isBlank() && config.hasTitleCollision(binding)) {
+            db.dao().diagnostic(Diagnostic(at = observedAt, code = "room_identity_collision"))
+            config.error = "같은 제목의 방이 여러 개입니다 · 대상 방을 다시 확인해 주세요"
+            return
+        }
         val roomId = config.roomId
         val messages = parsed.messages.map { it.copy(sender = config.alias(it.sender)) }
         // Dedup snapshots contain keyed signatures, never a second copy of message text.
@@ -55,31 +68,44 @@ class RadarApp : Application() {
         db.runInTransaction {
             val old = db.dao().snapshot(roomId)?.let { decodeMessages(it.payload) }.orEmpty()
             val diff = MessageDiff.compare(old, signatures)
-            val quality = if (diff.ambiguous) "uncertain_window" else "structured"
-            db.dao().insertMessages(messages.takeLast(diff.added.size).map {
+            val quality = if (parsed.method == "standard_extras") "fallback_no_message_time"
+                else if (diff.ambiguous) "uncertain_window" else "structured"
+            val added = messages.takeLast(diff.added.size)
+            val space = (50000 - db.dao().queueCount("pending") - db.dao().queueCount("rejected")).coerceAtLeast(0)
+            val retained = added.take(space)
+            if (retained.size < added.size) {
+                db.dao().diagnostic(Diagnostic(at = observedAt, code = "queue_overflow_entries", value = added.size - retained.size))
+                config.error = "전송 대기열 한도 초과 · 일부 알림 항목을 저장하지 못했습니다"
+            }
+            val saved = retained.map {
                 SavedMessage(UUID.randomUUID().toString(), roomId, binding.title, it.sender,
                     it.text, it.sourceTime, observedAt, urls(it.text).toString(), quality)
-            })
+            }
+            db.dao().insertMessages(saved)
+            db.dao().enqueue(saved.map { UploadEntry(it.eventId, updatedAt = observedAt) })
             db.dao().saveSnapshot(Snapshot(roomId, encodeMessages(diff.next), observedAt))
             db.dao().diagnostic(Diagnostic(at = observedAt, code = "selected_callbacks"))
+            db.dao().diagnostic(Diagnostic(at = observedAt, code = "saved_messages", value = saved.size))
             db.dao().diagnostic(Diagnostic(at = observedAt, code = "suppressed_entries", value = messages.size - diff.added.size))
             if (diff.ambiguous) db.dao().diagnostic(Diagnostic(at = observedAt, code = "uncertain_windows"))
         }
         config.lastCapture = observedAt
-        config.error = ""
+        if (db.dao().queueCount("pending") + db.dao().queueCount("rejected") < 50000) config.error = ""
+        if (syncSettings.enabled) SyncScheduler.kick(this)
     }
 
-    fun export(output: OutputStream) {
+    fun export(output: OutputStream, includeMessages: Boolean = true) {
         prune()
         output.bufferedWriter(Charsets.UTF_8).use { writer ->
             writer.appendLine(JSONObject().put("type", "metadata").put("format_version", 1)
-                .put("app_version", "0.1.0").put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+                .put("app_version", "0.3.0").put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
                 .put("android", Build.VERSION.RELEASE).put("build", Build.DISPLAY)
                 .put("exported_at", System.currentTimeMillis()).put("retention_days", 7)
+                .put("includes_messages", includeMessages)
                 .put("sender_format", "installation_hmac_sha256").toString())
             var after = 0L
             var afterId = ""
-            while (true) {
+            while (includeMessages) {
                 val page = db.dao().page(after, afterId)
                 if (page.isEmpty()) break
                 page.forEach { m ->
@@ -95,6 +121,10 @@ class RadarApp : Application() {
             db.dao().diagnostics().forEach { d ->
                 writer.appendLine(JSONObject().put("type", "diagnostic").put("at", d.at)
                     .put("code", d.code).put("value", d.value).toString())
+            }
+            db.dao().structures().forEach { s ->
+                writer.appendLine(JSONObject(s.payload).put("type", "notification_structure")
+                    .put("at", s.at).put("source", s.source).toString())
             }
         }
     }
@@ -146,14 +176,20 @@ class Config(context: Context) {
     }
     fun discover(candidate: RoomCandidate) {
         val all = candidates().toMutableList()
-        if (all.none { it == candidate }) {
+        if (all.none { it == candidate } || all.count { it.matches(candidate) } > 1) {
+            all.removeAll { it.matches(candidate) }
             all.add(0, candidate)
             prefs.edit().putString("candidates", JSONArray(all.take(20).map { toJson(it) }).toString()).apply()
         }
     }
     fun candidates(): List<RoomCandidate> {
         val array = JSONArray(prefs.getString("candidates", "[]"))
-        return (0 until array.length()).map { fromJson(array.getJSONObject(it)) }
+        return (0 until array.length()).map { fromJson(array.getJSONObject(it)) }.distinctBy {
+            if (it.shortcut.isNotBlank()) "shortcut:${it.shortcut}" else "key:${it.key}:title:${it.title}"
+        }
+    }
+    fun hasTitleCollision(candidate: RoomCandidate): Boolean = candidates().any {
+        it.title == candidate.title && !candidate.matches(it)
     }
     fun clear() { prefs.edit().remove("binding").remove("room_id").remove("candidates")
         .remove("last_capture").remove("error").putBoolean("enabled", false).commit() }
@@ -163,6 +199,6 @@ class Config(context: Context) {
         mac.init(SecretKeySpec(Base64.decode(prefs.getString("alias_key", ""), Base64.NO_WRAP), "HmacSHA256"))
         return mac.doFinal(sender.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
-    private fun toJson(c: RoomCandidate) = JSONObject().put("title", c.title).put("key", c.key).put("shortcut", c.shortcut)
-    private fun fromJson(o: JSONObject) = RoomCandidate(o.getString("title"), o.getString("key"), o.getString("shortcut"))
+    private fun toJson(c: RoomCandidate) = JSONObject().put("title", c.title).put("key", c.key).put("shortcut", c.shortcut).put("tag", c.tag)
+    private fun fromJson(o: JSONObject) = RoomCandidate(o.getString("title"), o.getString("key"), o.getString("shortcut"), o.optString("tag", ""))
 }

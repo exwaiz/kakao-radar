@@ -1,0 +1,7 @@
+.state/
+.venv/
+__pycache__/
+.pytest_cache/
+tests/
+tools/
+*.pem

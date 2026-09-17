@@ -10,8 +10,8 @@ android {
         applicationId = "dev.kakaoradar.collector"
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
@@ -25,6 +25,7 @@ kapt { arguments { arg("room.schemaLocation", "$projectDir/schemas") } }
 dependencies {
     implementation("androidx.core:core:1.13.1")
     implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.work:work-runtime:2.9.1")
     kapt("androidx.room:room-compiler:2.6.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")

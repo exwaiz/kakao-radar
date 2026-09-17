@@ -1,8 +1,8 @@
 # 카톡 요약 서비스 — 아키텍처 검토안
 
-작성일: 2026-09-16 · 상태: 목표 설계 및 M1 실기기 parser 재검증
+작성일: 2026-09-16 · 갱신: 2026-09-17 · 상태: v0.3.0 M2 구현·합성 연결 검증, M1 실제 신규 저장 검증 대기
 
-현재 구현 범위는 `android/app`의 알림 수집기·Room 저장·진단 화면과 JSONL 내보내기다. 2026-09-16 첫 실기기 사용에서 Listener callback은 확인했지만 현 `MessagingStyle`-only parser가 callback을 모두 unsupported로 분류했다. 따라서 현재 M1의 최우선 작업은 **실제 KakaoTalk notification structure 진단과 parser/room identity 수정**이다. 목표 구성의 WorkManager 업로드·FastAPI·서버 DB·LLM·알림 전달은 아직 구현하지 않았고, 이 문제가 해결되기 전에는 진행하지 않는다. 실행 방법은 [README](../README.md), 단말 검증은 [DEVICE_TEST](DEVICE_TEST.md), 최신 관찰은 [DEBUG_NOTES](DEBUG_NOTES.md)를 따른다.
+현재 구현 범위는 `android/app`의 알림 수집기·Room 저장·구조 진단 화면과 JSONL 내보내기다. 2026-09-17 v0.2.0에서 conversationTitle 누락 대응과 보수적 다단계 parser를 구현했고 실제 방 알림 3개 해석을 확인했다. 구조 진단 테이블을 추가하는 DB 1→2 migration을 적용한다. 현재 M1의 최우선 작업은 **대상 방 선택 후 신규 저장·중복 억제·연속 알림/재부팅 시 room identity·야간 지속성 검증**이다. 사용자는 M1 실측 대기 중 다음 단계 개발을 승인했다. M2 WorkManager 업로드·FastAPI·PostgreSQL 저장은 v0.3.0에 구현했고 합성 데이터로 실제 폰 HTTPS 연결을 검증했다. LLM과 본폰 알림 전달은 아직 구현하지 않았다. [M2 실행과 계약](M2_SYNC.md)을 따른다. 실행 방법은 [README](../README.md), 단말 검증은 [DEVICE_TEST](DEVICE_TEST.md), 최신 관찰은 [DEBUG_NOTES](DEBUG_NOTES.md)를 따른다.
 
 ## 1. 설계 방향
 
@@ -31,7 +31,7 @@ flowchart TD
     F --> P
 ```
 
-M1에서는 수집기와 로컬 DB만 사용한다. M2에서 API와 서버 저장을 연결하고, M3에서 AI, M4에서 알림 채널을 연결한다. 현재 실행 구성요소는 M1 Android 앱이며 나머지는 목표 설계다.
+M1에서는 수집기와 로컬 DB만 사용한다. M2에서 API와 서버 저장을 연결하고, M3에서 AI, M4에서 알림 채널을 연결한다. 현재 구현은 M1 Android 앱과 M2 전송 대기열·WorkManager·FastAPI·PostgreSQL이다. 합성 연결 검사만 수행했고 실제 운영 서버는 배포하지 않았다. M3 이후는 목표 설계다.
 
 ## 3. 구성요소와 책임
 
@@ -45,7 +45,7 @@ M1에서는 수집기와 로컬 DB만 사용한다. M2에서 API와 서버 저�
 | LLM 모듈 | 공급자·모델 미정 | 구조화된 관심도·요약 반환, 사용량 측정·상한 적용 |
 | 알림 모듈 | 채널 하나 선택 | 요약 전달, 발송 재시도, 조용한 시간·빈도 제한 |
 
-첫 서버는 API·Worker·DB를 한 호스트에서 운영하는 구성을 제안한다. Docker Compose는 후보이며 아직 파일을 만들지 않는다. 작업 큐는 PostgreSQL의 작업 상태·잠금으로 시작하고 Redis, 벡터 DB, 별도 메시지 브로커는 필요가 입증될 때 검토한다. Supabase는 이전 대화의 대안으로 남기며 동시에 구축하지 않는다.
+첫 서버는 API·Worker·DB를 한 호스트에서 운영하는 구성을 제안한다. Docker Compose 파일을 제공했다. 이 Windows에는 Docker가 없어 native PostgreSQL 17로 검증했으며 Compose 실행은 아직 검증하지 않았다. 작업 큐는 PostgreSQL의 작업 상태·잠금으로 시작하고 Redis, 벡터 DB, 별도 메시지 브로커는 필요가 입증될 때 검토한다. Supabase는 이전 대화의 대안으로 남기며 동시에 구축하지 않는다.
 
 ## 4. 수집과 메시지 식별
 
@@ -77,7 +77,7 @@ M1에서는 수집기와 로컬 DB만 사용한다. M2에서 API와 서버 저�
 | Delivery | delivery_id, summary_id, 채널, 중복 방지 키, pending/sending/sent/failed, 시도·외부 응답 |
 | Feedback | summary_id 또는 topic_id, 유용함·관심 없음, 기록 시각 |
 
-이는 논리 모델이며 SQL 마이그레이션·API 명세 확정본이 아니다. 발신자 가명은 기기 또는 프로젝트별 키를 사용하는 HMAC 등으로 만들 수 있으나 익명성 보장으로 표현하지 않는다. 본문에도 개인정보가 남을 수 있다.
+Device/Room/Message와 원문 없는 Receipt는 M2 SQL schema/API 계약으로 구현했다. AnalysisJob 이후 엔터티는 논리 모델이다. 발신자 가명은 기기 또는 프로젝트별 키를 사용하는 HMAC 등으로 만들 수 있으나 익명성 보장으로 표현하지 않는다. 본문에도 개인정보가 남을 수 있다.
 
 ## 6. 업로드와 처리 신뢰성
 

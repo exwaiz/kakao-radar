@@ -8,3 +8,13 @@ local.properties
 captures/
 *.jsonl
 !**/fixtures/*.jsonl
+.venv/
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+.pytest_cache/
+server/.state/
+*.pem

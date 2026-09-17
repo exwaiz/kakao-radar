@@ -2,6 +2,18 @@
 
 이 문서는 프로젝트에서 이미 합의했거나 실기기 결과로 확정된 결정을 기록한다. 새 Codex 세션은 장문의 과거 대화보다 이 문서와 `AGENTS.md`를 우선한다.
 
+## D-010 — KakaoTalk 26.8.0의 제목 누락 대응 (2026-09-17)
+
+- 상태: **실제 필드 확인, v0.2.0 구현**. 실행 검증 수치는 DEBUG_NOTES의 최신 기록을 따른다.
+- 연결된 Redmi / Android 15에서 그룹 child 알림 3개와 묶음 summary 1개를 관찰했다. child에는 MessagingStyle, messages, 명시적 group=true, shortcutId, android.title이 있으나 conversationTitle이 없었다. 기존 parser의 제목 필수 조건이 탈락 원인이다.
+- conversationTitle이 없을 때는 명시적 group=true와 비어 있지 않은 shortcutId가 모두 있어야 android.title을 방 이름으로 사용한다. 알림 제목만으로 그룹이나 방을 추정하지 않는다.
+- MessagingStyle → EXTRA_MESSAGES → EXTRA_TEXT 순으로 복구한다. EXTRA_MESSAGES 직접 복구 API는 Android 11 이상에서만 사용하며 9/10에서 해당 경로가 필요하면 별도 미지원 사유로 기록한다.
+- EXTRA_TEXT만 있는 경우 발신자·원본 시각은 추측하지 않는다. quality=fallback_no_message_time으로 구분한다.
+- shortcutId와 정확한 제목을 함께 비교하며 key 변경은 허용한다. shortcutId 없는 기존 바인딩은 key가 같아야 한다. 동일 제목 충돌 시 식별자가 없는 방의 저장은 보류한다. 재부팅 후 ID 안정성은 별도 검증 대상이다.
+- 구조 진단은 원문·방 이름·닉네임 없이 알려진 필드, 개수, HMAC만 저장한다. 최근 100개/72시간 한도이며 앱 실행·알림 처리 시 정리한다.
+- schema 1→2는 진단 테이블만 추가한다. 기존 메시지/진단을 지우지 않는다. 기존 알림 조회는 discovery, 새 callback은 live 카운터로 분리한다.
+- 서버/AI 범위는 확장하지 않는다.
+
 ## D-001 — 실시간 수집, 배치 분석
 
 - 상태: **확정**
@@ -103,3 +115,13 @@
 - 결정: 장기 지식은 repo Markdown에 저장하고, Codex 채팅은 기능/버그 단위로 나눈다.
 - 같은 버그의 수정→빌드→로그 확인은 같은 세션에서 이어간다. 하나의 milestone이 끝나면 문서를 갱신하고 다음 milestone은 새 세션으로 시작한다.
 - `AGENTS.md`는 지도 역할만 하며 상세 이력은 이 문서와 `DEBUG_NOTES.md`에 둔다.
+
+## D-011 — M1 실측 대기 중 M2 합성 개발 (2026-09-17)
+
+- 상태: **사용자 명시 승인, 구현·합성 검증**. D-003과 D-010의 개발 선행 제한을 이번 요청 범위에서 변경한다. 실제 수집 검증을 완료한 것으로 처리하지 않는다.
+- 단일 localhost FastAPI/PostgreSQL과 Android WorkManager로 M2를 개발한다. 보관 기본값은 원문 7일, 원문 없는 receipt 30일, 로컬 미전송 50,000항목이다. 운영 서버·관심 프로필·AI 예산·본폰 채널은 미확정이다.
+- 실제 관찰에서 동일 key/shortcut 해시는 유지됐으나 제목 해시가 여러 callback에 걸쳐 달랐다. shortcut이 있으면 제목은 선택용 표시값으로만 사용한다. 같은 shortcut은 제목/key 변화에도 같은 방이다. shortcut이 없으면 기존 보수적 제목+key 조건을 유지한다. 이는 D-010의 제목 필수 비교를 대체한다. 재부팅 뒤 ID 안정성은 미검증이다.
+- 기존 후보 목록은 shortcut 기준으로 중복을 제거한다. 같은 제목·다른 shortcut은 서로 다른 방이다.
+- 전송은 기본 꺼짐이며 HTTPS 서버·기기·대상 room_id·토큰 설정 이후 활성화한다. 기기 토큰은 Keystore AES-GCM, 서버에는 SHA-256 digest로 저장한다. 방별 허용 목록이 별도로 필요하다.
+- 전송 event_id 멱등 처리와 알림 재노출 억제는 분리한다. accepted/duplicate만 sent, 항목별 rejected는 보존한다. 오류 원문은 진단에 넣지 않는다.
+- 단말 시험은 별도 DB와 임시 테스트 CA를 사용한 합성 데이터만 전송한다. 실제 collector의 대상/서버 설정을 바꾸지 않는다. 상세 운영/삭제/복구 계약은 M2_SYNC.md에 둔다.

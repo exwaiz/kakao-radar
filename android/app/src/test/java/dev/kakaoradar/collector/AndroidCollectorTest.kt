@@ -30,19 +30,19 @@ class AndroidCollectorTest {
         pkg, pkg, 1, "tag", 1000, 0, 0, n, Process.myUserHandle(), 13000
     )
     @Test fun groupNotificationPreservesFields() {
-        val parsed = NotificationParser.parse(sbn(notification()))!!
+        val parsed = (NotificationParser.parse(sbn(notification())) as ParseResult.Success).notification
         assertEquals("테스트 방", parsed.room.title)
         assertEquals("room-one", parsed.room.shortcut)
         assertEquals(12345L, parsed.messages.single().sourceTime)
         assertEquals("tester", parsed.messages.single().sender)
         assertEquals("링크 https://example.com/?x=1", parsed.messages.single().text)
     }
-    @Test fun otherAppsAreRejected() { assertNull(NotificationParser.parse(sbn(notification(), "another.app"))) }
-    @Test fun directMessagesAreRejected() { assertNull(NotificationParser.parse(sbn(notification(group = false)))) }
-    @Test fun groupSummaryIsRejected() { assertNull(NotificationParser.parse(sbn(notification(summary = true)))) }
+    @Test fun otherAppsAreRejected() { assertEquals(ParseResult.Unsupported(ParseReason.OTHER_PACKAGE), NotificationParser.parse(sbn(notification(), "another.app"))) }
+    @Test fun directMessagesAreRejected() { assertEquals(ParseResult.Unsupported(ParseReason.NOT_GROUP), NotificationParser.parse(sbn(notification(group = false)))) }
+    @Test fun groupSummaryIsRejected() { assertEquals(ParseResult.Unsupported(ParseReason.GROUP_SUMMARY), NotificationParser.parse(sbn(notification(summary = true)))) }
     @Test fun plainTitleDoesNotBecomeRoom() {
         val n = Notification.Builder(context, "test").setContentTitle("테스트 방").setContentText("private text").build()
-        assertNull(NotificationParser.parse(sbn(n)))
+        assertTrue(NotificationParser.parse(sbn(n)) is ParseResult.Unsupported)
     }
     @Test fun selectedRoomMustMatchIdentityAndTitle() {
         val chosen = RoomCandidate("room", "key-one", "")
