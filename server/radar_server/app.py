@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from uuid import UUID
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -12,8 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from starlette.concurrency import run_in_threadpool
 
 from .store import Store
+from .analysis_models import ProfileUpdate
+from .analysis_store import AnalysisStore, VersionConflict
 
 MAX_BODY = 1024*1024
+PROFILE_SCHEMA = ProfileUpdate.model_json_schema()
+# Inline the sole nested model so OpenAPI's document root has no dangling $defs ref.
+PROFILE_SCHEMA["properties"]["profile"] = PROFILE_SCHEMA.pop("$defs")["InterestProfile"]
 
 
 class Message(BaseModel):
@@ -54,8 +59,10 @@ def create_app(dsn=None):
     async def lifespan(app):
         store.migrate()
         yield
-    app = FastAPI(title="Kakao Radar ingestion",version="0.3.0",lifespan=lifespan)
+    app = FastAPI(title="Kakao Radar",version="0.4.0",lifespan=lifespan)
     app.state.store = store
+    analysis = AnalysisStore(store)
+    app.state.analysis = analysis
     bearer = HTTPBearer(auto_error=False)
 
     def principal(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
@@ -81,7 +88,7 @@ def create_app(dsn=None):
 
     @app.get("/health")
     def health():
-        return {"status":"ok","version":"0.3.0"}
+        return {"status":"ok","version":"0.4.0"}
 
     @app.post("/v1/messages/batch")
     async def batch(request: Request, device=Depends(principal)):
@@ -122,5 +129,44 @@ def create_app(dsn=None):
     @app.delete("/v1/rooms/{room_id}/data")
     def delete(room_id: UUID,device=Depends(principal)):
         return {"deleted_events":store.delete_room(device,room_id),"room_allowed":False}
+
+    @app.get("/v1/profile")
+    def profile(device=Depends(principal)):
+        return analysis.profile(device)
+
+    @app.put("/v1/profile",openapi_extra={"requestBody":{"required":True,"content":{"application/json":{"schema":PROFILE_SCHEMA}}}})
+    async def update_profile(request: Request,device=Depends(principal)):
+        raw=bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw)>32768:
+                raise HTTPException(413,"Profile too large")
+        try:
+            update=ProfileUpdate.model_validate_json(raw)
+        except ValidationError:
+            raise HTTPException(422,"Invalid profile") from None
+        try:
+            return await run_in_threadpool(analysis.update_profile,device,update)
+        except VersionConflict:
+            raise HTTPException(409,"Profile version changed") from None
+
+    @app.get("/v1/analysis/status")
+    def analysis_status(device=Depends(principal)):
+        return analysis.status(device)
+
+    @app.get("/v1/analysis/jobs")
+    def analysis_jobs(limit: int=Query(20,ge=1,le=100),offset: int=Query(0,ge=0,le=100000),device=Depends(principal)):
+        return {"items":analysis.jobs(device,limit,offset)}
+
+    @app.get("/v1/rooms/{room_id}/summaries")
+    def summaries(room_id: UUID,limit: int=Query(20,ge=1,le=100),offset: int=Query(0,ge=0,le=100000),candidates_only: bool=False,device=Depends(principal)):
+        return {"items":analysis.summaries(device,room_id,limit,offset,candidates_only)}
+
+    @app.get("/v1/summaries/{summary_id}/evidence")
+    def evidence(summary_id: UUID,device=Depends(principal)):
+        result=analysis.evidence(device,summary_id)
+        if result is None:
+            raise HTTPException(404,"Summary not found")
+        return result
 
     return app

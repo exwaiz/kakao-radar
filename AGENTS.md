@@ -6,11 +6,13 @@
 
 ## Current milestone
 
-**M2 implementation with synthetic data; M1 field validation remains pending.**
+**M3 advance implementation with synthetic data; M1 field validation and personal AI quality evaluation remain pending.**
+
+2026-09-17 사용자는 M3 아키텍처와 실제 구현을 선행 요청했다. 최신 M2 커밋 `672092c`를 기준으로 M3 서버 분석을 구현한다. 이 승인은 D-003/D-011의 순서 제한을 이번 M3 범위에서 변경한다. 기본 프로필/Worker는 비활성이고 외부 AI 호출은 자격 증명 사용 결정 후 연결한다. 사용자 관심사·유료 모델·예산을 추측하지 않는다. 합성 검증을 실제 카톡 수집 성공이나 사용자 품질 평가 통과로 기록하지 않는다. M4 발송은 별도다.
 
 2026-09-17 사용자는 폰 조작이 불가능하여 ‘방이 발견됐다고 가정하고 다음 마일스톤 개발’을 명시적으로 승인했다. 이 지시는 이전 M1 선행 조건보다 우선한다. M2 저장·동기화를 합성 데이터로 개발/검증한다. M1 실제 방 발견·신규 저장·수집률을 성공한 것으로 기록하지 않는다. 실제 업로드는 단말의 서버·기기 인증·대상 방 설정 전까지 비활성화한다.
 
-2026-09-17 v0.2.0을 실제 Redmi에 업데이트했다. KakaoTalk 26.8.0은 그룹 알림에서 conversationTitle 없이 android.title을 제공했고, 보수적 제목 fallback 적용 후 기존 실제 방 알림 3개를 해석해 방 3개를 발견했다. 묶음 요약 1개는 제외됐다. **대상 방 미선택으로 신규 실제 메시지 저장·수집률·야간 지속성은 미검증이다. 사용자의 후속 지시에 따라 M2는 합성 데이터로 개발했다. 실제 운영 검증과 M3/M4는 별도로 남는다.**
+2026-09-17 v0.2.0을 실제 Redmi에 업데이트했다. KakaoTalk 26.8.0은 그룹 알림에서 conversationTitle 없이 android.title을 제공했고, 보수적 제목 fallback 적용 후 기존 실제 방 알림 3개를 해석해 방 3개를 발견했다. 묶음 요약 1개는 제외됐다. **대상 방 미선택으로 신규 실제 메시지 저장·수집률·야간 지속성은 미검증이다. 사용자의 후속 지시에 따라 M2/M3는 합성 데이터로 개발했다. 실제 운영 검증과 외부 AI/사용자 품질 평가, M4 발송은 별도로 남는다.**
 
 ## Read before coding
 
@@ -19,6 +21,7 @@
 3. `docs/PROJECT_BRIEF.md` — 사용자 문제, scope, milestones.
 4. `docs/ARCHITECTURE.md` — 목표 구조와 경계.
 5. `docs/DEVICE_TEST.md` — 실기기 검증 절차.
+6. `docs/M3_ANALYSIS.md` — M3 모듈, 작업·예산·근거·평가 계약.
 
 ## Working rules
 

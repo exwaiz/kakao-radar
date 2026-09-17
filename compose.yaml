@@ -28,5 +28,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+  worker:
+    build: ./server
+    profiles: ["analysis"]
+    environment:
+      RADAR_DATABASE_URL: postgresql://radar:${RADAR_DB_PASSWORD}@db:5432/radar
+      RADAR_ANALYSIS_PROVIDER: ${RADAR_ANALYSIS_PROVIDER:-disabled}
+    command: ["python", "-m", "radar_server.worker"]
+    depends_on:
+      db:
+        condition: service_healthy
 volumes:
   radar-db:

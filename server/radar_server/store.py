@@ -79,11 +79,19 @@ class Store:
         with self.connect() as db:
             messages = db.execute("DELETE FROM messages WHERE observed_at < %s", (int(time.time()*1000)-7*86400000,)).rowcount
             receipts = db.execute("DELETE FROM receipts WHERE received_at < now()-interval '30 days'").rowcount
-        return {"expired_messages":messages,"expired_receipts":receipts}
+        # Commit raw-data cleanup before acquiring job locks to avoid lock inversion
+        # with completion, which checks live sources under its job lease.
+        with self.connect() as db:
+            summaries = db.execute("DELETE FROM analysis_summaries WHERE created_at < now()-interval '90 days'").rowcount
+            jobs = db.execute("DELETE FROM analysis_jobs WHERE created_at < now()-interval '90 days' AND (status<>'running' OR lease_until<clock_timestamp())").rowcount
+            usage = db.execute("DELETE FROM analysis_usage WHERE created_at < now()-interval '90 days'").rowcount
+        return {"expired_messages":messages,"expired_receipts":receipts,
+                "expired_summaries":summaries,"expired_jobs":jobs,"expired_usage":usage}
 
     def delete_room(self, device, room):
         # Revoke first in the same transaction; blocked room cannot be repopulated by queued retries.
         with self.connect() as db:
             db.execute("UPDATE rooms SET allowed=false WHERE device_id=%s AND room_id=%s", (device,room))
+            db.execute("DELETE FROM analysis_jobs WHERE device_id=%s AND room_id=%s", (device,room))
             count = db.execute("DELETE FROM receipts WHERE device_id=%s AND room_id=%s", (device,room)).rowcount
         return count
