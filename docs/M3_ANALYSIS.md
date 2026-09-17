@@ -120,4 +120,4 @@ pip install -r requirements-dev.txt
 python tools/run_local_tests.py --postgres-bin /path/to/pgsql/bin
 ```
 
-이 명령은 전용 localhost PostgreSQL을 시작하고 테스트와 합성 demo를 실행한 뒤 중지한다. 보고서는 `.state/m3-tests.xml`, `.state/m3-demo.json`, `.state/m3-demo.md`다. 기존 서버/단말 설정은 바꾸지 않는다.
+이 명령은 전용 localhost PostgreSQL을 시작하고 테스트와 합성 demo를 실행한 뒤 중지한다. M4 추가 후 전체 검사 보고서는 `.state/m4-tests.xml`이며 M3 demo는 `.state/m3-demo.json`, `.state/m3-demo.md`에 남긴다. 기존 서버/단말 설정은 바꾸지 않는다. 최신 실행 도구의 전용 DB와 M4 보고서는 [M4_DELIVERY.md](M4_DELIVERY.md)를 따른다.

@@ -66,3 +66,44 @@ CREATE INDEX IF NOT EXISTS analysis_usage_day ON analysis_usage(device_id,budget
 CREATE INDEX IF NOT EXISTS analysis_jobs_room ON analysis_jobs(device_id,room_id,created_at);
 CREATE INDEX IF NOT EXISTS messages_received ON messages(device_id,room_id,received_at,event_id);
 INSERT INTO schema_versions(version) VALUES(2) ON CONFLICT DO NOTHING;
+
+-- M4 settings contain no channel credentials. Runtime secrets stay on the server.
+CREATE TABLE IF NOT EXISTS delivery_settings (
+ device_id UUID PRIMARY KEY REFERENCES devices(device_id) ON DELETE CASCADE,
+ version INTEGER NOT NULL, config JSONB NOT NULL, next_due_at TIMESTAMPTZ,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS delivery_outbox (
+ delivery_id UUID PRIMARY KEY, device_id UUID REFERENCES devices(device_id) ON DELETE CASCADE,
+ settings_version INTEGER NOT NULL, profile_version INTEGER NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('pending','sending','retry_wait','accepted','uncertain','failed','cancelled')),
+ payload JSONB NOT NULL, slot_at TIMESTAMPTZ NOT NULL, not_before TIMESTAMPTZ NOT NULL,
+ attempts INTEGER NOT NULL DEFAULT 0, owner_token UUID, lease_until TIMESTAMPTZ,
+ last_error TEXT, provider_message_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ accepted_at TIMESTAMPTZ, link_expires_at TIMESTAMPTZ NOT NULL DEFAULT now()+interval '7 days'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS delivery_one_active_device ON delivery_outbox(device_id)
+ WHERE status IN ('pending','sending','retry_wait');
+CREATE TABLE IF NOT EXISTS delivery_items (
+ delivery_id UUID REFERENCES delivery_outbox(delivery_id) ON DELETE CASCADE,
+ device_id UUID NOT NULL, summary_id UUID REFERENCES analysis_summaries(summary_id) ON DELETE CASCADE,
+ room_id UUID NOT NULL, fingerprint TEXT NOT NULL,
+ PRIMARY KEY(delivery_id,summary_id), UNIQUE(device_id,summary_id)
+);
+CREATE INDEX IF NOT EXISTS delivery_dedup ON delivery_items(device_id,room_id,fingerprint);
+-- Attempts survive room/summary deletion and retain unknown-outcome quota reservations.
+CREATE TABLE IF NOT EXISTS delivery_attempts (
+ attempt_id UUID PRIMARY KEY, delivery_id UUID REFERENCES delivery_outbox(delivery_id) ON DELETE SET NULL,
+ device_id UUID REFERENCES devices(device_id) ON DELETE CASCADE, quota_day DATE NOT NULL,
+ outcome TEXT NOT NULL CHECK(outcome IN ('started','accepted','rejected','uncertain')),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS delivery_quota ON delivery_attempts(device_id,quota_day);
+CREATE TABLE IF NOT EXISTS summary_feedback (
+ device_id UUID REFERENCES devices(device_id) ON DELETE CASCADE,
+ summary_id UUID REFERENCES analysis_summaries(summary_id) ON DELETE CASCADE,
+ rating TEXT NOT NULL CHECK(rating IN ('useful','not_interested')),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(device_id,summary_id)
+);
+CREATE INDEX IF NOT EXISTS delivery_created ON delivery_outbox(device_id,created_at);
+INSERT INTO schema_versions(version) VALUES(3) ON CONFLICT DO NOTHING;

@@ -1,12 +1,14 @@
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import UUID
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from starlette.concurrency import run_in_threadpool
@@ -14,6 +16,9 @@ from starlette.concurrency import run_in_threadpool
 from .store import Store
 from .analysis_models import ProfileUpdate
 from .analysis_store import AnalysisStore, VersionConflict
+from .delivery_channels import ChannelConfigurationError, DigestLinks, channel_readiness
+from .delivery_models import DeliveryPolicyUpdate, DeliveryResolution, FeedbackUpdate
+from .delivery_store import DeliveryConflict, DeliveryStore
 
 MAX_BODY = 1024*1024
 PROFILE_SCHEMA = ProfileUpdate.model_json_schema()
@@ -53,16 +58,23 @@ class Message(BaseModel):
         return value
 
 
-def create_app(dsn=None):
+def create_app(dsn=None, digest_links=None):
     store = Store(dsn or os.environ["RADAR_DATABASE_URL"])
     @asynccontextmanager
     async def lifespan(app):
         store.migrate()
         yield
-    app = FastAPI(title="Kakao Radar",version="0.4.0",lifespan=lifespan)
+    app = FastAPI(title="Kakao Radar",version="0.5.0",lifespan=lifespan)
     app.state.store = store
     analysis = AnalysisStore(store)
     app.state.analysis = analysis
+    delivery = DeliveryStore(store)
+    app.state.delivery = delivery
+    try:
+        links = digest_links if digest_links is not None else DigestLinks.from_env()
+    except (ChannelConfigurationError, ValueError):
+        links = DigestLinks()
+    app.state.digest_links = links
     bearer = HTTPBearer(auto_error=False)
 
     def principal(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
@@ -88,7 +100,7 @@ def create_app(dsn=None):
 
     @app.get("/health")
     def health():
-        return {"status":"ok","version":"0.4.0"}
+        return {"status":"ok","version":"0.5.0"}
 
     @app.post("/v1/messages/batch")
     async def batch(request: Request, device=Depends(principal)):
@@ -168,5 +180,112 @@ def create_app(dsn=None):
         if result is None:
             raise HTTPException(404,"Summary not found")
         return result
+
+    async def bounded_model(request, model):
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 32768:
+                raise HTTPException(413,"Request too large")
+        try:
+            return model.model_validate_json(raw)
+        except ValidationError:
+            raise HTTPException(422,"Invalid request") from None
+
+    def body_schema(model):
+        schema = model.model_json_schema()
+        definitions = schema.pop("$defs", {})
+        for prop, value in schema.get("properties", {}).items():
+            if "$ref" in value:
+                schema["properties"][prop] = definitions[value["$ref"].split("/")[-1]]
+        return {"requestBody":{"required":True,"content":{"application/json":{"schema":schema}}}}
+
+    @app.get("/v1/delivery/policy")
+    def delivery_policy(device=Depends(principal)):
+        return delivery.policy(device)
+
+    @app.put("/v1/delivery/policy",openapi_extra=body_schema(DeliveryPolicyUpdate))
+    async def delivery_policy_update(request: Request,device=Depends(principal)):
+        update = await bounded_model(request, DeliveryPolicyUpdate)
+        try:
+            return await run_in_threadpool(delivery.update_policy,device,update)
+        except VersionConflict:
+            raise HTTPException(409,"Delivery settings changed") from None
+
+    @app.get("/v1/delivery/status")
+    def delivery_status(device=Depends(principal)):
+        return {**delivery.status(device), "channel": "ntfy", **channel_readiness(), "digest_links_configured": links.enabled}
+
+    @app.get("/v1/delivery/preview")
+    def delivery_preview(device=Depends(principal)):
+        return delivery.preview(device)
+
+    @app.get("/v1/delivery/history")
+    def delivery_history(limit: int=Query(20,ge=1,le=100),offset: int=Query(0,ge=0,le=100000),device=Depends(principal)):
+        return {"items":delivery.history(device,limit,offset)}
+
+    @app.post("/v1/delivery/{delivery_id}/resolve",openapi_extra=body_schema(DeliveryResolution))
+    async def delivery_resolve(delivery_id: UUID,request: Request,device=Depends(principal)):
+        resolution = await bounded_model(request, DeliveryResolution)
+        try:
+            result = await run_in_threadpool(delivery.resolve,device,delivery_id,resolution)
+        except DeliveryConflict:
+            raise HTTPException(409,"Delivery cannot be resolved in its current state") from None
+        if result is None:
+            raise HTTPException(404,"Delivery not found")
+        return result
+
+    @app.put("/v1/summaries/{summary_id}/feedback",openapi_extra=body_schema(FeedbackUpdate))
+    async def summary_feedback(summary_id: UUID,request: Request,device=Depends(principal)):
+        update = await bounded_model(request, FeedbackUpdate)
+        result = await run_in_threadpool(delivery.feedback,device,summary_id,update.rating)
+        if result is None:
+            raise HTTPException(404,"Summary not found")
+        return result
+
+    @app.get("/v1/feedback")
+    def feedback_list(limit: int=Query(20,ge=1,le=100),offset: int=Query(0,ge=0,le=100000),device=Depends(principal)):
+        return {"items":delivery.feedback_list(device,limit,offset)}
+
+    def link_signature(delivery_id, authorization):
+        token = authorization[7:] if authorization and authorization.startswith("Digest ") else None
+        if not links.verify(delivery_id,token):
+            raise HTTPException(404,"Digest unavailable")
+
+    @app.get("/v1/digests/{delivery_id}")
+    def digest(delivery_id: UUID,authorization: str | None=Header(default=None)):
+        link_signature(delivery_id,authorization)
+        result = delivery.digest(delivery_id)
+        if result is None:
+            raise HTTPException(404,"Digest unavailable")
+        result.pop("device_id")
+        return JSONResponse(content=jsonable_encoder(result),
+                            headers={"Cache-Control":"no-store","Referrer-Policy":"no-referrer"})
+
+    @app.put("/v1/digests/{delivery_id}/summaries/{summary_id}/feedback",openapi_extra=body_schema(FeedbackUpdate))
+    async def digest_feedback(delivery_id: UUID,summary_id: UUID,request: Request,authorization: str | None=Header(default=None)):
+        link_signature(delivery_id,authorization)
+        digest = await run_in_threadpool(delivery.digest,delivery_id)
+        if digest is None:
+            raise HTTPException(404,"Digest unavailable")
+        update = await bounded_model(request, FeedbackUpdate)
+        result = await run_in_threadpool(delivery.feedback,digest["device_id"],summary_id,update.rating,delivery_id)
+        if result is None:
+            raise HTTPException(404,"Summary not found")
+        return JSONResponse(result,headers={"Cache-Control":"no-store"})
+
+    static = Path(__file__).with_name("static")
+    page_headers = {"Cache-Control":"no-store","Referrer-Policy":"no-referrer","X-Content-Type-Options":"nosniff",
+                    "Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"}
+
+    @app.get("/digest/{delivery_id}",include_in_schema=False)
+    def digest_page(delivery_id: UUID):
+        return FileResponse(static/"digest.html",headers=page_headers)
+
+    @app.get("/assets/{name}",include_in_schema=False)
+    def digest_asset(name: str):
+        if name not in ("digest.css","digest.js"):
+            raise HTTPException(404,"Not found")
+        return FileResponse(static/name,headers=page_headers)
 
     return app

@@ -6,7 +6,9 @@
 
 ## Current milestone
 
-**M3 advance implementation with synthetic data; M1 field validation and personal AI quality evaluation remain pending.**
+**M4 advance implementation with synthetic data; M1 field validation, external AI and main-phone delivery evaluation remain pending.**
+
+2026-09-17 사용자는 새 Thread에서 M4 구현을 요청했다. M3 `0a750c0`을 기준으로 정기 발송 큐, 조용한 시간, 중복 억제, 피드백과 본폰 조회 페이지를 구현한다. 채널 선택 응답이 없는 개발 단계의 기본 어댑터는 ntfy이며 사용자 운영 선택으로 확정하지 않는다. Worker/시간표/일일 상한은 기본 비활성이다. 실제 외부 메시지는 채널과 발송 범위가 설정·승인되기 전 보내지 않는다. 합성 ntfy 수락을 실제 본폰 수신으로 기록하지 않는다. 상세는 docs/M4_DELIVERY.md와 D-013을 따른다.
 
 2026-09-17 사용자는 M3 아키텍처와 실제 구현을 선행 요청했다. 최신 M2 커밋 `672092c`를 기준으로 M3 서버 분석을 구현한다. 이 승인은 D-003/D-011의 순서 제한을 이번 M3 범위에서 변경한다. 기본 프로필/Worker는 비활성이고 외부 AI 호출은 자격 증명 사용 결정 후 연결한다. 사용자 관심사·유료 모델·예산을 추측하지 않는다. 합성 검증을 실제 카톡 수집 성공이나 사용자 품질 평가 통과로 기록하지 않는다. M4 발송은 별도다.
 
@@ -22,6 +24,7 @@
 4. `docs/ARCHITECTURE.md` — 목표 구조와 경계.
 5. `docs/DEVICE_TEST.md` — 실기기 검증 절차.
 6. `docs/M3_ANALYSIS.md` — M3 모듈, 작업·예산·근거·평가 계약.
+7. `docs/M4_DELIVERY.md` — M4 정기 발송·복구·피드백·사본 삭제 계약.
 
 ## Working rules
 

@@ -1,4 +1,4 @@
-"""Run tests on a dedicated local PostgreSQL cluster; never use the M2 DB.
+"""Run tests on a dedicated M4 local PostgreSQL cluster; never use the M2/M3 DB.
 
 Example: python tools/run_local_tests.py --postgres-bin /path/to/pgsql/bin
 The cluster is localhost-only, uses synthetic fixtures, and stops in finally.
@@ -13,10 +13,12 @@ import sys
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--postgres-bin", required=True, type=Path)
-    parser.add_argument("--port", type=int, default=55329)
+    parser.add_argument("--port", type=int, default=55330)
+    parser.add_argument("--serve", action="store_true", help="Keep the synthetic phone digest open for local UI verification")
+    parser.add_argument("--server-port", type=int, default=8004)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    state = root / ".state" / "m3-test-postgres"
+    state = root / ".state" / "m4-test-postgres"
     state.mkdir(parents=True, exist_ok=True)
     data = state / "data"
     suffix = ".exe" if os.name == "nt" else ""
@@ -37,12 +39,17 @@ def main():
         started = True
         import psycopg
         with psycopg.connect(f"postgresql://radar_test@127.0.0.1:{args.port}/postgres", autocommit=True) as db:
-            if not db.execute("SELECT 1 FROM pg_database WHERE datname='radar_m3_test'").fetchone():
-                db.execute("CREATE DATABASE radar_m3_test")
-        env["RADAR_TEST_DATABASE_URL"] = f"postgresql://radar_test@127.0.0.1:{args.port}/radar_m3_test"
-        result = subprocess.run([sys.executable, "-m", "pytest", "-q", "--junitxml=.state/m3-tests.xml"], cwd=root, env=env)
+            if not db.execute("SELECT 1 FROM pg_database WHERE datname='radar_m4_test'").fetchone():
+                db.execute("CREATE DATABASE radar_m4_test")
+        env["RADAR_TEST_DATABASE_URL"] = f"postgresql://radar_test@127.0.0.1:{args.port}/radar_m4_test"
+        result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml=.state/m4-tests.xml"], cwd=root, env=env)
         if result.returncode == 0:
             result = subprocess.run([sys.executable,"tools/demo_m3.py"],cwd=root,env=env)
+        if result.returncode == 0:
+            command = [sys.executable,"tools/demo_m4.py"]
+            if args.serve:
+                command.extend(["--serve","--port",str(args.server_port)])
+            result = subprocess.run(command,cwd=root,env=env)
     finally:
         if started:
             pg("pg_ctl", "-D", data, "-m", "fast", "-w", "stop")

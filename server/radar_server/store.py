@@ -85,12 +85,21 @@ class Store:
             summaries = db.execute("DELETE FROM analysis_summaries WHERE created_at < now()-interval '90 days'").rowcount
             jobs = db.execute("DELETE FROM analysis_jobs WHERE created_at < now()-interval '90 days' AND (status<>'running' OR lease_until<clock_timestamp())").rowcount
             usage = db.execute("DELETE FROM analysis_usage WHERE created_at < now()-interval '90 days'").rowcount
+        # Commit summary/item cleanup before outbox locks: sends lock outbox then
+        # sources, so acquiring these locks in the opposite order could deadlock.
+        with self.connect() as db:
+            deliveries = db.execute("DELETE FROM delivery_outbox WHERE created_at < now()-interval '90 days' AND (status<>'sending' OR lease_until<clock_timestamp())").rowcount
+            attempts = db.execute("DELETE FROM delivery_attempts WHERE created_at < now()-interval '90 days'").rowcount
         return {"expired_messages":messages,"expired_receipts":receipts,
-                "expired_summaries":summaries,"expired_jobs":jobs,"expired_usage":usage}
+                "expired_summaries":summaries,"expired_jobs":jobs,"expired_usage":usage,
+                "expired_deliveries":deliveries,"expired_delivery_attempts":attempts}
 
     def delete_room(self, device, room):
         # Revoke first in the same transaction; blocked room cannot be repopulated by queued retries.
         with self.connect() as db:
+            from .delivery_store import DeliveryStore
+            db.execute("SELECT device_id FROM devices WHERE device_id=%s FOR UPDATE", (device,))
+            DeliveryStore.cancel_room(db,device,room)
             db.execute("UPDATE rooms SET allowed=false WHERE device_id=%s AND room_id=%s", (device,room))
             db.execute("DELETE FROM analysis_jobs WHERE device_id=%s AND room_id=%s", (device,room))
             count = db.execute("DELETE FROM receipts WHERE device_id=%s AND room_id=%s", (device,room)).rowcount

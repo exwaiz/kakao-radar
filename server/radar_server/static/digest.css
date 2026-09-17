@@ -1,0 +1,19 @@
+:root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }
+body { margin: 0; background: light-dark(#f5f4ef, #171a18); color: light-dark(#202c25, #e8eee9); }
+main { max-width: 680px; margin: 0 auto; padding: 32px 20px 48px; }
+.eyebrow { font-size: .75rem; letter-spacing: .15em; color: light-dark(#47735b, #8bca9f); }
+h1 { font-size: 2rem; margin: 8px 0 16px; }
+h2 { font-size: 1.15rem; margin-top: 0; overflow-wrap: anywhere; }
+p, li { line-height: 1.65; overflow-wrap: anywhere; }
+.notice, .footnote { font-size: .85rem; color: light-dark(#58635b, #a5b2a8); }
+article { margin: 20px 0; padding: 22px; border: 1px solid light-dark(#d8dfd8, #3f4b42); border-radius: 14px; background: light-dark(#fff, #212722); }
+ul { padding-left: 20px; }
+button { font: inherit; padding: 10px 15px; margin: 6px 8px 0 0; border-radius: 8px; border: 1px solid light-dark(#5c7c65, #7b9d82); color: inherit; background: transparent; cursor: pointer; }
+button[aria-pressed="true"] { background: light-dark(#dceddf, #35563e); }
+button:disabled { cursor: wait; opacity: .55; }
+button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid #77b68d; outline-offset: 3px; }
+a { color: light-dark(#24623c, #94d6ab); }
+summary { cursor: pointer; padding: 12px 0; }
+blockquote { margin: 10px 0; padding: 10px 14px; border-left: 3px solid #83a58b; white-space: pre-wrap; overflow-wrap: anywhere; }
+.caveat { font-size: .85rem; color: light-dark(#805c20, #e1c18a); }
+.feedback-status { font-size: .8rem; min-height: 1.5em; margin-bottom: 0; }

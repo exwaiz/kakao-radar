@@ -368,7 +368,7 @@ def test_repeated_migration_preserves_m2_messages_and_receipts(setup):
     assert store.status(device)["stored_messages"] == 1
     with store.connect() as db:
         assert db.execute("SELECT count(*) AS n FROM receipts WHERE device_id=%s", (device,)).fetchone()["n"] == 1
-        assert db.execute("SELECT max(version) AS v FROM schema_versions").fetchone()["v"] == 2
+        assert db.execute("SELECT max(version) AS v FROM schema_versions").fetchone()["v"] == 3
 
 
 def test_summary_and_job_completion_roll_back_together(setup):
