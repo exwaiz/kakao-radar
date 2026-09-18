@@ -12,8 +12,9 @@ from radar_server.store import Store
 from radar_server.delivery_store import DeliveryStore
 from radar_server.delivery_models import DeliveryPolicy,DeliveryPolicyUpdate
 parser=argparse.ArgumentParser()
-parser.add_argument('--interval-minutes',type=int,choices=[10,30],default=30)
-parser.add_argument('--max-topics',type=int,choices=range(1,11),default=5)
+parser.add_argument('--interval-minutes',type=int,choices=[10,30,60],default=60)
+parser.add_argument('--max-topics',type=int,choices=range(1,11),default=3)
+parser.add_argument('--preserve-daily-limit',action='store_true',help='Keep a higher existing quota when changing the test interval mid-day')
 args=parser.parse_args()
 interval=args.interval_minutes
 store=Store('postgresql:///radar?user=kakaoradar&host=/var/run/postgresql')
@@ -27,7 +28,7 @@ deadline=datetime.combine(now.date()+timedelta(days=1),time(0),zone)
 normal=current['policy']
 policy=DeliveryPolicy.model_validate({**normal,'include_source_quotes':True,
     'daily_times':[f'{hour:02}:{minute:02}' for hour in range(24) for minute in range(0,60,interval)],
-    'daily_notification_limit':24*60//interval,'test_mode_until':deadline.isoformat(),
+    'daily_notification_limit':max(24*60//interval,normal['daily_notification_limit']) if args.preserve_daily_limit else 24*60//interval,'test_mode_until':deadline.isoformat(),
     'max_topics_per_digest':args.max_topics,
     'resume_max_topics_per_digest':normal.get('resume_max_topics_per_digest') or normal['max_topics_per_digest'],
     'resume_daily_times':normal.get('resume_daily_times') or normal['daily_times'],

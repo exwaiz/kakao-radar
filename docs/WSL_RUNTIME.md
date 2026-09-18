@@ -1,8 +1,20 @@
 # WSL 운영 통합 — 2026-09-17
 
-Android 0.3.1 / 서버 0.6.1. 기준은 기존 M4 브랜치 `12c86a2`이며 `feat/wsl-runtime`에서 통합한다. 라즈베리파이는 필요하지 않다.
+Android 1.0.0 / 서버 1.0.0. 통합 브랜치는 master다. 기준은 기존 M4 브랜치 `12c86a2`이며 `feat/wsl-runtime`에서 통합한다. 라즈베리파이는 필요하지 않다.
 
-## 9/18 최신 개선 — 보고 진도와 서식
+## 9/18 최신 지시 — 1시간 테스트와 v1.0.0 통합
+
+Telegram 테스트는 **한국 시간 매시 정각 1시간 간격, 최대 3개 주제**로 변경했다. 운영 설정 version 3→4, 시간표 144슬롯→24슬롯, 적용 직후 next_due 2026-09-18 12:00 KST를 확인했다. 오늘 기존 17회 발송 시도를 보존했으며 테스트 quota 144회는 그대로 두었다. 이 quota는 매시간 추가 발송을 뜻하지 않고 재시도를 포함한 상한이다.
+
+9/19 00:00의 기존 23:00 / 하루 1회 / 최대 5개 주제 복귀, 실제 대사·수집 시각·중복 억제·방별 진도·AI $1/day는 유지한다. 빈 후보는 발송하지 않는다. 아래의 10분·30분 테스트 서술은 이전 이력이며 이 설정이 우선한다.
+
+재현: `configure_test_day.py --interval-minutes 60 --max-topics 3 --preserve-daily-limit`. 기본 interval은 60분, max-topics는 3이다. 신규 테스트일에 quota를 새로 계산할 때는 `--preserve-daily-limit`을 생략하며 24회가 된다. 사용자 요청 없이 도구를 매일 실행하거나 테스트 기간을 연장하지 않는다.
+
+변경 전/후 설정과 실행 가능한 rollback 스크립트는 PC 비공개 `AppData/Local/Codex/adb-diagnostics/2026-09-18_10-00-52/battery-focus/hourly-telegram-{before,after}.json`, `rollback-hourly-telegram.py`, `rollback-hourly-telegram.txt`에 있다. 저장소에는 기기/방 ID, 자격 증명이나 운영 원문을 복제하지 않는다.
+
+카카오톡 주기적 깨우기 기능은 사용자 지시로 보류했다. 배터리 진단에서 적용한 Radar의 Doze 예외 1건과 1회 앱 전환 사실은 DEBUG_NOTES의 별도 관찰이며 알림 지연 해결·수집률 통과를 뜻하지 않는다.
+
+## 9/18 이전 개선 — 보고 진도와 서식
 
 실제 08:20 보고에 오늘 07:40 대화가 있었으나 08:30–09:00 보고는 다시 어젯밤 후보를 보냈다. 전체 후보 중요도순 선택·표현 지문만으로는 중복/역행을 막지 못했다. schema 5의 `delivery_progress`/`delivery_source_receipts`는 기기·방별 최신 원문 observed_at와 전달한 원문 ID·내용 해시를 저장한다. 실제 기존 최신 전달 진도를 **9/18 07:40:07**로 복원했다.
 

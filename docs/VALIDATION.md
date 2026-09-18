@@ -1,13 +1,23 @@
 # 검증 결과
 
-## 서버 0.6.1 / 진도·원문 중복·서식 — 2026-09-18 (최신)
+## v1.0.0 / master 통합 — 2026-09-18 (최신)
+
+- 전용 합성 PostgreSQL `radar_integration_test`: **183 passed / 0 skipped / 0 failed**, 24.41초, 기존 deprecation 경고 2개. 운영 DB·실제 대화·유료 OpenAI 호출은 회귀 테스트에 사용하지 않았다.
+- 수집 비교 도구 unittest: **5 passed**, 0.001초.
+- Android: 설치된 Gradle 8.9/JDK 17/SDK 35 캐시로 `assembleDebug testDebugUnitTest lintDebug` 오프라인 실행. **BUILD SUCCESSFUL**, 3분 32초, 57 tasks. 단위 테스트 **43 passed / 0 skipped / 0 failed / 0 errors**, lint error 0 / 기존 warning 9.
+- 생성된 debug APK: `dev.kakaoradar.collector`, versionCode **5**, versionName **1.0.0**. SHA-256 `b9740e646b8d29b9790b5a71349630255db4d99a463ad314a7756e2822895c2d`. 이 빌드는 폰에 설치하거나 instrumentation을 실행하지 않았다.
+- 실제 Telegram 설정 version 3→4, 10분 144슬롯→매시 정각 24슬롯. 변경 시 다음 슬롯 12:00 KST, 최대 3개 주제, 기존 오늘 quota 144회·원문 인용·자정 정상 복귀를 확인했다. 변경 전/후·rollback은 PC 비공개 감사 폴더에 보존했다.
+- 최신 WSL 브랜치와 M3 baseline의 동일 source tree를 비교하고, 모든 기능 코드와 최신 전달 진도·원문 중복 억제·서식을 보존했다. 버전 표시와 테스트 설정 도구의 기본값/기존 quota 보존만 변경했다.
+- 위 통과를 화면 OFF 알림 지연 해결, 장기 수집률, 재부팅/야간 지속성이나 개인 AI 품질 평가 통과로 기록하지 않는다. 새 Telegram 메시지를 추가 발송하거나 과금 API로 릴리스를 검증하지 않았다.
+
+## 서버 0.6.1 / 진도·원문 중복·서식 — 2026-09-18 (이전)
 
 - 전용 합성 PostgreSQL `radar_integration_test`: **183 passed / 0 skipped / 0 failed**, 24.78초, 기존 의존성 deprecation 경고 2개. 실제 방 원문은 fixture나 테스트 DB에 사용하지 않았다.
 - 아침 전달 후 늦게 분석한 전날 정보 배제, 다른 요약 표현의 동일 근거 및 새 ID/동일 원문 배제, 한 구간의 중요 후보 선택 후 잔여 후보 이월 금지, 새/옛 근거 혼합 문장 제외와 새 근거 인용, 연결 실패의 진도 미소비, 이관의 최신 시점 복원·반복 안전성, outbox 만료 뒤 진도 보존·방 삭제 정리를 검증했다.
 - Telegram 명시 bold entities의 UTF-16 offset과 비BMP emoji 경계, 원문 HTML/Markdown literal 보존, 3/5/10 주제의 모든 항목 표시·4,000 단위 제한을 검증했다. 기존 M2–M5/quote/quiet/quota/uncertain/삭제 회귀도 통과했다.
 - 실제 WSL 이관/서비스 재시작, 최신 전달 원문 진도 오늘 07:40:07 복원. 새 후보 0이며 빈 업데이트를 과거 내용으로 채우지 않는다. 기존 본인 Telegram에 서비스 변경/서식 테스트 안내 API 수락, 공통 quota 및 이력 기록. 실제 새 대화 요약/본폰 화면 표시 latency 확인과 구분한다.
 
-## 서버 0.6.0 / WSL 실제 통합 — 2026-09-18 (최신)
+## 서버 0.6.0 / WSL 실제 통합 — 2026-09-18 (이전)
 
 - Ubuntu 24.04 native PostgreSQL 16, 전용 disposable `radar_integration_test` DB: **최종 pytest 172 passed / 0 skipped / 0 failed**, 24.67초. 기존 Starlette/FastAPI deprecation 경고 2개. 운영 DB/실제 대화는 이 테스트에 사용하지 않았다.
 - 후속 다량 테스트: 10분 시간표 144슬롯/상한 144회, 최대 3개 주제, 자정에 23:00/하루 1회/최대 5개 주제 복귀를 검증했다. 실제 인용의 원문 수집 시각을 한국 시간으로 표시하는 시험을 포함한다. 사용자 보고로 Telegram 실제 수신을 확인했으며 정확한 단말 표시 latency는 미측정이다.

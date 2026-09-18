@@ -1,12 +1,12 @@
 # 카톡 요약 서비스 — 아키텍처 검토안
 
-작성일: 2026-09-16 · 갱신: 2026-09-18 · 상태: Android 0.3.1 / 서버 0.6.1 WSL 실운영 통합
+작성일: 2026-09-16 · 갱신: 2026-09-18 · 상태: Android 1.0.0 / 서버 1.0.0 · master WSL 실운영 통합
 
-최신 전달 단계는 **방별 원문 수집 진도 → 새 근거만 남긴 요점 → 원문 ID/내용 해시·요약 지문 중복 제거 → 중요도 선택 → 수집 시각순 표시 → Telegram 수락/불명확과 구간 완료를 함께 커밋**한다. `delivery_progress`와 원문 없는 `delivery_source_receipts`는 schema 5에 추가한다. 완료한 구간의 잔여 후보를 새 업데이트로 보내지 않는다. 새/옛 근거가 섞인 요점은 재작성 없이 제외한다. 인용은 새 근거에서만 가져오고 Telegram은 literal 텍스트와 명시 UTF-16 bold entities로 제목/핵심을 강조한다. 오늘 테스트는 10분/3개/144회, 9/19 자정 정상 23:00/1회/5개 복귀다. D-016과 WSL_RUNTIME.md가 아래 과거 전달 제안보다 우선한다.
+최신 전달 단계는 **방별 원문 수집 진도 → 새 근거만 남긴 요점 → 원문 ID/내용 해시·요약 지문 중복 제거 → 중요도 선택 → 수집 시각순 표시 → Telegram 수락/불명확과 구간 완료를 함께 커밋**한다. `delivery_progress`와 원문 없는 `delivery_source_receipts`는 schema 5에 추가한다. 완료한 구간의 잔여 후보를 새 업데이트로 보내지 않는다. 새/옛 근거가 섞인 요점은 재작성 없이 제외한다. 인용은 새 근거에서만 가져오고 Telegram은 literal 텍스트와 명시 UTF-16 bold entities로 제목/핵심을 강조한다. 오늘 테스트는 매시 정각 1시간/3개이며 기존 오늘 quota 144회를 보존한다. 9/19 자정 정상 23:00/1회/5개 복귀다. D-017, D-016과 WSL_RUNTIME.md가 아래 과거 전달 제안보다 우선한다. 릴리스 범위와 합성·실운영 검증 구분은 RELEASE_1_0.md를 따른다.
 
 현재 흐름은 Redmi 알림 → Room/WorkManager → USB ADB reverse → WSL `127.0.0.1:8443` HTTPS → PostgreSQL 16 → OpenAI Responses → 근거 검증·비용 정산 → Telegram 발송 큐다. 외부 공개 서버는 없다. 관리 API는 WSL loopback 8000, 폰 HTTPS는 loopback 8443이다. 데이터베이스는 Unix socket peer 인증이며 전용 서비스 계정은 superuser가 아니다. OpenAI/Telegram 비밀은 필요한 Worker에만 읽힌다. 정기 발송은 23:00 Asia/Seoul, 하루 1회이고 urgent 기본 비활성이다. 이전 ntfy 어댑터는 유지되며 현재 선택은 Telegram이다. 자세한 운영·잔여 조건은 [WSL_RUNTIME.md](WSL_RUNTIME.md)를 따른다.
 
-## M3 구현 상태
+## M3/M4 단계별 구현 이력 (아래 버전·대기 상태는 당시 기록)
 
 M2 커밋 `672092c`에서 관심 프로필과 주제·근거 요약을 추가했다. 영속 작업의 대상 ID·프로필/프롬프트 버전, 소유권 fencing, 방별 중복 억제, 일일 사용량 예약·정산, 실패/보류 상태, 원문 만료 표시와 표본 평가를 구현한다. 요약 저장과 작업 완료는 같은 트랜잭션이다. 외부 API 호출이 없는 추출형 기준선을 제공하고 실제 LLM 어댑터는 자격 증명·공급자 선택 후 연결한다. M3 `0a750c0`에 M4 기기별 정기 발송 큐·ntfy 어댑터·피드백 페이지를 추가했다. 모듈과 실행 계약은 [M3_ANALYSIS.md](M3_ANALYSIS.md), [M4_DELIVERY.md](M4_DELIVERY.md)를 따른다.
 

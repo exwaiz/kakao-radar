@@ -183,3 +183,54 @@ Then update DEBUG_NOTES.md with exactly what the code can now observe on the nex
 - 실제 앱 업데이트는 데이터 삭제 없이 schema 2→3 전환. 서버 등록·실제 동기화 활성화·외부 배포는 수행하지 않았다.
 
 남은 실측: 정확한 대상 방 선택/표본 수집, 방 ID의 재부팅 안정성, 화면 꺼짐 WorkManager/WAN/TLS 운영, 실제 500건 누락/중복·배터리. 다음 구현 milestone은 M3 관심 프로필·요약 평가이며 공급자/자격 증명/예산 연결과 사용자 평가를 별도로 진행한다.
+
+## 2026-09-18 — Redmi 알림 지연 ADB 진단 (설정 변경 없음)
+
+상태: **실기기 확인 — 충전·화면 ON의 현재 상태만 관찰**. 사용자가 카카오톡 알림 지연·묶음 도착에 대해 ADB 진단 후 최소 변경을 요청했다. 화면 OFF 지연을 이번 작업에서 재현하거나 해결했다고 기록하지 않는다.
+
+- Authorized 기기 정확히 1대. Redmi Note 14 5G / 24094RAD4G, Android 15 / SDK 35, HyperOS OS2.0(code 2), build display AP3A.240905.015.A2 / incremental V816.0.2.0.ULJSZXM. Android user 0.
+- KakaoTalk 26.8.0과 Google Play Services 26.33.32 설치·실행 확인. 두 패키지는 stopped=false, suspended=false, hidden=false, enabled=0(default).
+- KakaoTalk은 user Doze whitelist, GMS는 system 및 system-excidle whitelist에 이미 포함. 두 앱은 bucket 5(EXEMPTED), inactive=false. 재검증에서 동일.
+- RUN_IN_BACKGROUND는 두 앱 모두 개별 조회에서 Default mode: allow. RUN_ANY_IN_BACKGROUND는 allow. START_FOREGROUND는 카카오톡 allow / GMS default allow. POST_NOTIFICATION은 둘 다 default allow. 카카오톡 POST_NOTIFICATIONS 런타임 권한 granted=true.
+- GMS .gcm.GcmService 실행 중. 두 앱 프로세스 cached=false. UID별 netpolicy effective=NONE, Data Saver 및 저전력 모드 OFF. 프로세스·서비스 존재는 화면 OFF FCM 연결 유지나 실제 메시지 도착의 증거가 아니다.
+- DeviceIdle/Light ACTIVE, mCharging=true, mScreenOn=true, deep/light Doze 기능 enabled. Wi-Fi 현재 VALIDATED 및 NOT_SUSPENDED, RSSI -35 dBm. Wi-Fi suspend optimization enabled 자체는 연결 단절의 증거가 아니다.
+- stay_on_while_plugged_in=15, mStayOn=true. 자연 Doze 테스트는 USB/충전기를 분리하고 화면 OFF·정지 상태에서 수행한다. 재연결 후 ACTIVE만 보고 과거 Doze 진입 여부를 판정하지 않는다.
+- wifi_sleep_policy=2를 읽었으며 변경하지 않았다. Android 플랫폼에서는 API 30부터 사용 중단된 설정이다.
+- 표준 설정에 실제 제한이 없어 **Android 설정 변경 0건 / rollback 명령 없음**. 기존 예외를 제거하거나 AppOps를 임의로 덮어쓰지 않았다. MIUI 비공개 AppOps 번호 의미를 추측하거나 변경하지 않았다.
+- 원인 조사 우선순위(미확정): 화면 OFF FCM 연결/재접속, HyperOS의 별도 절전/자동 시작, FCM 우선순위 또는 카카오톡 처리·재동기화. HyperOS UI 현재값·FCM 발신 우선순위·화면 OFF 재현은 미확인.
+- 초기/재검증 dump·명령·변경 내역·상세 보고서·메타데이터 로그 스크립트는 PC의 로컬 `AppData/Local/Codex/adb-diagnostics/2026-09-18_10-00-52`에 저장. 저장소에 채팅 원문·닉네임·토큰·dump를 추가하지 않았다.
+- 다음 실험: 비충전 상태로 화면 OFF 20~30분 → 외부 기기에서 메시지 발송 시각 기록 → USB 재연결 즉시 보존된 logcat 메타데이터 수집. logcat main/system 각각 2 MiB로 일부 로그가 덮어써질 수 있다. M1 실제 수집률·M3 개인 AI 품질 평가의 성공으로 해석하지 않는다.
+
+### 2026-09-18 후속 — 로그 검증 취소, 상시 충전 배터리 정책 조치
+
+- 사용자가 로그 검증을 취소하고 카카오톡 배터리 최적화 예외·폰 전체 배터리 절약 확인과 조치를 지시했다. 상시 충전 예정이며 Radar 신뢰성을 우선한다.
+- **실기기 확인:** Android 일반·적응형 Battery Saver 모두 OFF(full=false, adaptive=false), 자동 절전 threshold=0 / automatic=0, sticky=false. HyperOS POWER_SAVE_MODE_OPEN=0. null인 설정값을 임의로 enable/disable하지 않았다.
+- **발견 및 조치:** dev.kakaoradar.collector는 user/system Doze whitelist에 없었고 bucket 40(RARE)이었다. 변경 전 값을 PC의 로컬 배터리 감사 폴더에 기록한 후 `cmd deviceidle whitelist +dev.kakaoradar.collector`를 실행했다. user whitelist 추가 성공·재조회 확인, bucket 5(EXEMPTED)로 변화. bucket set 명령은 실행하지 않았다.
+- KakaoTalk은 기존 user whitelist, GMS는 기존 system whitelist를 유지하며 둘 다 bucket 5. Radar의 RUN_IN_BACKGROUND/RUN_ANY_IN_BACKGROUND default allow. 세 앱 모두 inactive=false.
+- Radar 알림 접근 enabled 및 CollectorService가 Android 시스템에 바인딩되어 실행 중임을 확인했다. 실제 채팅 저장·수집률·지연 해결의 검증은 아니다.
+- 변경 1건의 rollback: `adb shell cmd deviceidle whitelist -dev.kakaoradar.collector`. 해제 후 bucket은 사용 이력에 따라 재계산되므로 조회해 확인한다. 카카오톡/GMS 원래 예외는 제거하지 않는다.
+- **미완료 경계:** HyperOS 앱별 절전/자동 시작 UI는 ADB input의 INJECT_EVENTS 권한 부족으로 조작 불가. 설치된 PowerKeeper provider도 signature 권한으로 읽기 거부되어 중단했다. 비공개 AppOps 번호 추측/변경 및 root/권한 우회 없음. 사용자에게 별도 'USB 디버깅(보안 설정)' 활성화 입력을 요청했고 답변을 기다린다.
+- 기존 로그 필터 검증은 취소되었으며 완료로 기록하지 않는다. 상세 전후 값/명령/rollback은 로컬 `battery-focus/report.md`, `radar-whitelist-change.json`, `final-state.json`에 있다. 아래 추가 실제 UI 조치가 없다면 현재 변경은 Radar 배터리 예외 추가 1건이다.
+
+### 2026-09-18 후속 — KakaoTalk 실행 후 Radar 복귀, 주기적 깨우기 검토
+
+- **사용자 관찰:** HyperOS에서 알림이 지연되다가 한꺼번에 오는 현상이 KakaoTalk Activity를 열었다가 Radar로 돌아오면 일시적으로 해소된다고 보고했다. 이번 작업에서 메시지를 보내거나 로그로 효과를 검증하지 않았다.
+- **실기기 확인:** 10:42 KST, Android user 0의 KakaoTalk launcher `com.kakao.talk/.activity.SplashActivity`를 `am start -W`로 실행했다. `Status: ok`, WARM 실행, 실제 Activity `com.kakao.talk/.activity.main.MainActivity`를 반환했다. 약 3초 뒤 기존 Radar launcher `dev.kakaoradar.collector/.MainActivity`를 실행했고 `Status: ok`를 반환했다. 별도 `dumpsys window`의 `mCurrentFocus`와 `dumpsys activity activities`의 `topResumedActivity`로 Radar가 전면에 있음을 확인했다. 채팅 내용이나 화면은 읽거나 저장하지 않았다.
+- 이번 앱 전환에서 설정 변경은 0건이며 force-stop, 데이터 삭제, 로그아웃을 하지 않았다. 앞선 Radar Doze 예외 추가 1건은 유지된다. 실행 결과는 PC의 비공개 `battery-focus/activity-wake.json`에 기록했다.
+- **구현 상태:** 10분마다 자동 깨우기는 아이디어 검토 단계이며 앱 기능이나 예약 실행을 추가하지 않았다. 현재 앱은 targetSdk 35이고 NotificationListenerService 및 15분 WorkManager 업로드를 사용한다.
+- **플랫폼 제약:** 앱 프로세스에서 `am start`를 실행해도 ADB shell UID 권한을 얻지 않는다. 화면 OFF/백그라운드에서 다른 앱의 Activity를 실행하는 동작은 Android BAL 제한을 받으며 Doze 예외만으로 실행 권한이 생기지 않는다. WorkManager 정기 작업의 최소 주기는 15분이고 정확한 실행 시각은 보장하지 않는다. Radar가 화면에 보이는 동안의 일반 Intent 실행은 별도의 조건이다.
+- **제안:** PC에 USB를 계속 연결하는 운영이면 PC의 ADB가 10분마다 KakaoTalk 실행 → 짧은 대기 → Radar 복귀를 수행하도록 구성할 수 있다. 충전기만 연결한 폰 단독 운영이면 Shizuku 등 별도의 ADB 권한 연동과 주기 실행 설계가 필요하다. 잠금/화면 OFF에서 실제 수신 개선과 10분 주기의 적절성은 아직 검증하지 않았다.
+- 근거: [Android 앱 sandbox](https://source.android.com/docs/security/app-sandbox), [백그라운드 Activity 실행 제한](https://developer.android.com/guide/components/activities/secure-bal), [WorkManager 정기 작업](https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work), [ADB Activity 실행](https://developer.android.com/tools/adb), [Shizuku 사용자 안내](https://shizuku.rikka.app/guide/setup/).
+
+
+### 2026-09-18 최신 지시 — 주기적 KakaoTalk 깨우기 보류
+
+사용자가 주기적 KakaoTalk 깨우기 기능을 없던 일로 하도록 지시했다. 구현·권한 추가·예약 실행을 진행하지 않는다. 이어서 Telegram 테스트 전송 10분→1시간 변경, 현재 구현의 GitHub 반영과 master 통합, 1.0 버전 표시를 요청했다.
+
+### 2026-09-18 최신 조치 — Telegram 1시간 설정과 v1.0.0 통합 검증
+
+- 사용자 지시로 주기적 KakaoTalk 깨우기는 보류하고, 실제 Telegram 테스트 설정을 version 3→4로 갱신했다. 시간표 144개(10분)→24개(매시 정각), 최대 3개 주제다. 변경 시 next_due 12:00 KST를 확인했다.
+- 기존 오늘 17회 발송 시도와 quota 144회를 보존했다. quota를 중간에 낮춰 오늘 발송이 막히지 않도록 `--preserve-daily-limit`을 추가했다. 자정 23:00/하루 1회/최대 5개 주제 복귀, 실제 대사 인용·진도·중복 억제·AI $1/day를 유지한다.
+- 변경 전/후 정책과 rollback 스크립트/명령은 PC 비공개 `battery-focus/hourly-telegram-{before,after}.json`, `rollback-hourly-telegram.py`, `rollback-hourly-telegram.txt`에 기록했다. 원문·계정 비밀은 저장소에 추가하지 않았다.
+- GitHub 기존 M1/M2/M3/M4/WSL 구현을 master 기준으로 통합하고 Android versionCode 5 / versionName 1.0.0, 서버 1.0.0을 표시한다. 최신 WSL 기능 코드가 동일하게 보존됐는지 비교했다. 상세 범위는 RELEASE_1_0.md, architecture 결정은 D-017이다.
+- **합성 검증:** 서버 183개 + 수집 비교 도구 5개 + Android 단위 테스트 43개 통과. Android assembleDebug/lintDebug 성공(error 0, 기존 warning 9). 폰 APK 업데이트나 새 외부 전송은 실행하지 않았다. 화면 OFF 지연 해결이나 장기 수집률·개인 품질 평가 통과와 구분한다.
