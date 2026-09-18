@@ -28,7 +28,8 @@ class Worker:
             self.analysis.fail(claim, "source_expired", permanent=True)
             return "failed"
         targets = self.analysis.targets(claim)
-        topics = tuple(t for t in prepare_topics(messages) if any(m.event_id in targets for m in t.messages))
+        reactions = any(any(word in term for word in ('공감','반응','웃','reaction')) for term in claim.profile.interests)
+        topics = tuple(t for t in prepare_topics(messages,preserve_reactions=reactions) if any(m.event_id in targets for m in t.messages))
         batch = AnalysisInput(topics, claim.profile, claim.profile_version)
         # A chatter-only batch needs no provider call or budget reservation.
         if not batch.topics:
@@ -70,7 +71,14 @@ class Worker:
             if not isinstance(result.model, str) or not re.fullmatch(r"[A-Za-z0-9._/-]{1,100}", result.model):
                 raise ValueError("Invalid model metadata")
             output = validate_output(result.output, batch)
-        except (ValidationError, ValueError, TypeError, AttributeError):
+        except (ValidationError, ValueError, TypeError, AttributeError) as error:
+            reasons = {'Invalid topic set':'topic_set', 'Invalid evidence scope':'evidence_scope',
+                       'Invalid source URLs':'source_urls', 'Uncertain source requires a caveat':'source_caveat'}
+            reason = reasons.get(str(error), 'schema') if isinstance(error, ValueError) and not isinstance(error, ValidationError) else 'schema'
+            print('analysis_output_rejected:' + reason, flush=True)
+            if isinstance(error, ValidationError):
+                # Field names and error types only; never values or validation messages.
+                print('analysis_schema_errors:' + ','.join('.'.join(str(part) for part in item['loc']) + ':' + item['type'] for item in error.errors(include_input=False,include_url=False)[:5]), flush=True)
             self.analysis.fail(claim, "invalid_output")
             return "failed"
         return "completed" if self.analysis.complete(claim, batch, output, result.model) else "superseded"
@@ -87,13 +95,13 @@ class Worker:
 
 def main():
     parser = argparse.ArgumentParser(description="M3 analysis worker")
-    parser.add_argument("--provider", choices=["disabled", "extractive"], default=os.environ.get("RADAR_ANALYSIS_PROVIDER", "disabled"))
+    parser.add_argument("--provider", choices=["disabled", "extractive", "openai"], default=os.environ.get("RADAR_ANALYSIS_PROVIDER", "disabled"))
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--force", action="store_true", help="Bypass count/time scheduling only")
     parser.add_argument("--device", type=UUID)
     parser.add_argument("--room", type=UUID)
     args = parser.parse_args()
-    if args.provider not in ("disabled", "extractive"):
+    if args.provider not in ("disabled", "extractive", "openai"):
         parser.error("Unsupported analysis provider")
     if args.provider == "disabled":
         print("Analysis provider is disabled")
@@ -102,7 +110,15 @@ def main():
         parser.error("--force requires --once")
     store = Store(os.environ["RADAR_DATABASE_URL"])
     store.migrate()
-    worker = Worker(AnalysisStore(store), ExtractiveProvider())
+    if args.provider == "openai":
+        from .openai_provider import OpenAIProvider
+        try:
+            provider = OpenAIProvider()
+        except ProviderFailure:
+            parser.exit(1, "OpenAI credential configuration is incomplete\n")
+    else:
+        provider = ExtractiveProvider()
+    worker = Worker(AnalysisStore(store), provider)
     while True:
         try:
             print(worker.run_once(args.force, args.device, args.room), flush=True)

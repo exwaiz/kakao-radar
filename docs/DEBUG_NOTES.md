@@ -2,6 +2,18 @@
 
 실기기에서 확인된 사실과 아직 검증되지 않은 가설을 분리해 기록한다. 채팅 원문은 이 문서에 저장하지 않는다.
 
+## 2026-09-17 — WSL 실제 통합
+
+2026-09-18 사용자 보고로 Telegram 실제 수신을 확인했다. 사용자가 테스트 메시지를 더 많이 요청해 오늘은 10분마다 최대 3개 주제로 늘린다. 정확한 폰 표시 시각/latency 측정과 사용자 유용성 평가는 별도다.
+
+- Redmi Android 0.3.1 업데이트, 기존 선택/DB 보존. 폰 350건 저장·sent 350·pending 0·처리 오류 0, WSL 350건 저장 확인. 전체 카카오 메시지 수집률은 미검증이다.
+- WSL loopback HTTPS + USB reverse를 사용한다. 공개 터널 자동 승인 거절 후 로컬 방식으로 전환했다. 비밀은 Git에서 제외하며 승인된 기존 파일만 읽는다.
+- 실제 OpenAI에서 certainty none 오용, topic 누락/중복, evidence scope 오류가 검증에 차단됐다. 불확실성 enum 제한, 필수 topic 객체 키, topic별 evidence ID enum, 동일 근거 중복 정규화로 보강했다. 잘못된 ID를 만들어 채우지 않는다.
+- systemd 실행에서 tools 디렉터리만 import 경로에 있어 Worker가 모듈을 찾지 못했다. runtime.py에 server 경로를 명시했고 서비스 active와 연속 completed를 확인했다.
+- Telegram 입력 서버의 sandbox 네트워크 제한으로 WinError 10013을 재현했다. 허용된 네트워크 실행으로 수정해 정상 저장·요약 API 수락을 확인했다. 오류는 단계별로 안내하며 토큰/응답 본문은 출력하지 않는다.
+- DeviceDiagnosticsTest가 production 프로세스를 종료하여 수집 listener가 끊겼다. 기존 권한 disallow→allow로 복구하고 Bound=true를 확인했다. 앱 시작 requestRebind를 추가했다. 진단 뒤 실제 바인딩까지 확인한다. 제목 parser 변경은 사용자 요청대로 후속이다.
+- 삼성전자 등 지정 관심사, 하루 $1, Telegram 23:00/하루 1회, urgent off를 반영했다. 최신 원문 없는 집계는 outputs의 runtime/phone/Telegram check JSON이다. 상세는 WSL_RUNTIME.md, M5_LATENCY.md.
+
 ## 2026-09-17 — M3 선행 구현 세션
 
 - 사용자 요청: M3 문서를 읽고 아키텍처와 실제 구현을 선행 개발. 이어 사용자가 다른 세션에서 M2 커밋 완료를 알려 GitHub의 최신 `672092c`를 가져와 기준을 갱신했다.

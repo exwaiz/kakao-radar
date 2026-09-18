@@ -18,8 +18,12 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLSocketFactory
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
+import java.security.cert.CertificateFactory
+import android.content.pm.ApplicationInfo
 
-data class SyncTarget(val server: String, val device: String, val room: String, val token: String, val generation: String)
+data class SyncTarget(val server: String, val device: String, val room: String, val token: String, val generation: String, val localCa: String = "")
 
 class SyncSettings(private val context: Context, private val preferenceName: String = "sync", private val keyAlias: String = "radar-sync-token") {
     private val prefs = context.getSharedPreferences(preferenceName, Context.MODE_PRIVATE)
@@ -35,15 +39,20 @@ class SyncSettings(private val context: Context, private val preferenceName: Str
     val server get() = prefs.getString("server", "").orEmpty()
     val device get() = prefs.getString("device", "").orEmpty()
     val room get() = prefs.getString("room", "").orEmpty()
-    fun configure(server: String, device: String, room: String, token: String) {
+    fun configure(server: String, device: String, room: String, token: String, localCa: String = "") {
         val url = URL(server)
         require(url.protocol == "https" && url.host.isNotBlank() && url.userInfo == null && url.query == null && url.ref == null && url.path in listOf("", "/"))
         UUID.fromString(device); UUID.fromString(room)
         require(token.length in 32..512 && token.all { it.code in 33..126 })
+        if (localCa.isNotBlank()) {
+            require(context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
+            require(url.host == "localhost" && url.port == 8443 && localCa.length <= 16384)
+            CertificateFactory.getInstance("X.509").generateCertificate(localCa.byteInputStream())
+        }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, secretKey()) }
         val encrypted = Base64.encodeToString(cipher.iv + cipher.doFinal(token.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
         prefs.edit().putString("server", server.trimEnd('/')).putString("device", device).putString("room", room)
-            .putString("token_encrypted", encrypted).putBoolean("enabled", true)
+            .putString("token_encrypted", encrypted).putString("local_ca", localCa).putBoolean("enabled", true)
             .putString("generation", UUID.randomUUID().toString()).putString("error", "").commit()
     }
     private fun secretKey(): SecretKey {
@@ -62,7 +71,7 @@ class SyncSettings(private val context: Context, private val preferenceName: Str
             init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
         }
         val token = String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8)
-        return SyncTarget(server, device, room, token, prefs.getString("generation", "").orEmpty())
+        return SyncTarget(server, device, room, token, prefs.getString("generation", "").orEmpty(), prefs.getString("local_ca", "").orEmpty())
     }
     fun current(target: SyncTarget) = enabled && prefs.getString("generation", "") == target.generation
     fun clear() { prefs.edit().clear().commit() }
@@ -74,7 +83,14 @@ class HttpsUploadTransport(private val socketFactory: SSLSocketFactory? = null) 
     override fun post(target: SyncTarget, payload: String): UploadReply {
         val connection = URL("${target.server}/v1/messages/batch").openConnection() as HttpsURLConnection
         try {
-            socketFactory?.let { connection.sslSocketFactory = it }
+            val pinned = if (target.localCa.isNotBlank()) {
+                require(connection.url.host == "localhost" && connection.url.port == 8443)
+                val certificate = CertificateFactory.getInstance("X.509").generateCertificate(target.localCa.byteInputStream())
+                val trust = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null); setCertificateEntry("radar-local", certificate) }
+                val managers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(trust) }
+                SSLContext.getInstance("TLS").apply { init(null, managers.trustManagers, null) }.socketFactory
+            } else null
+            (socketFactory ?: pinned)?.let { connection.sslSocketFactory = it }
             connection.requestMethod = "POST"
             connection.instanceFollowRedirects = false
             connection.connectTimeout = 15000; connection.readTimeout = 20000

@@ -1,5 +1,18 @@
 # 검증 결과
 
+## 서버 0.6.0 / WSL 실제 통합 — 2026-09-18 (최신)
+
+- Ubuntu 24.04 native PostgreSQL 16, 전용 disposable `radar_integration_test` DB: **최종 pytest 172 passed / 0 skipped / 0 failed**, 24.67초. 기존 Starlette/FastAPI deprecation 경고 2개. 운영 DB/실제 대화는 이 테스트에 사용하지 않았다.
+- 후속 다량 테스트: 10분 시간표 144슬롯/상한 144회, 최대 3개 주제, 자정에 23:00/하루 1회/최대 5개 주제 복귀를 검증했다. 실제 인용의 원문 수집 시각을 한국 시간으로 표시하는 시험을 포함한다. 사용자 보고로 Telegram 실제 수신을 확인했으며 정확한 단말 표시 latency는 미측정이다.
+- OpenAI strict Responses, 실제 비용·예약 상한·sanitized 실패, 주제별 필수 출력과 evidence scope, 불확실성 표시, Telegram 정확한 개인 chat ID/응답 소실/정정 표시/원문 인용 회귀를 검증했다.
+- 30분 시간표 48슬롯/테스트 상한 48회, 자정 자동 복귀·기존 큐 취소, 첫 열람 멱등성·HMAC/기기 범위, urgent threshold/age/cooldown·공통 quota와 수동 정기 슬롯 보존을 검증했다.
+- 인용은 같은 device/room의 live 원문과 정확히 일치한다. 다른 방 원문을 읽지 않고 outbox에 원문 quote를 영구 저장하지 않는 시험을 포함한다.
+- Android 최종 build / **43 unit tests** / lint / debug instrumentation APK build 통과. 마지막 빌드 2분 8초. DB schema 3 유지, 기존 개인 debug 서명으로 Redmi 업데이트했다. 진단 1건 OK, 진단이 끊은 listener를 복구하고 최종 앱 시작 requestRebind 뒤 Bound=true·sync enabled·error 없음 확인.
+- 실제 운영: 메시지 354건 저장, 분석 작업 45건 완료, 요약 351개/관심 후보 272개. 원문·닉네임·비밀을 보고서에 넣지 않았다. 요약은 문맥 중첩이 있어 message 수와 분모가 다르다.
+- 실제 인용 포함 검증 발송: 주제 5개/원문 인용 5개, Telegram API accepted. 정기 next_due는 2026-09-18 08:00으로 유지됐다. API 수락은 본폰 표시나 사용자 열람을 뜻하지 않는다.
+
+초기 적체/노트북 중단 구간 때문에 전체 capture→upload p95 약 3908초, upload→analysis p95 약 28993초였다. steady-state 5분 목표를 통과한 것으로 기록하지 않는다. 실제 단말 알림 표시·사용자 50주제 품질 평가·재부팅 뒤 수집률/장기 운영·외부 웹 근거 접근은 미검증이다. 공개 터널은 자동 승인 검토 거절로 시작하지 않았고 로컬 USB HTTPS로 운영한다.
+
 ## 서버 0.5.0 / M4 — 2026-09-17 (최신)
 
 기준 M3는 `0a750c0`이며 새 Thread의 사용자 M4 구현 요청으로 `feat/m4-delivery`에서 개발했다. Android 코드/APK와 실제 collector 설정은 변경하지 않았다. 테스트는 전용 localhost:55330/radar_m4_test와 모의 ntfy를 사용했다.

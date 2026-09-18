@@ -64,7 +64,7 @@ def create_app(dsn=None, digest_links=None):
     async def lifespan(app):
         store.migrate()
         yield
-    app = FastAPI(title="Kakao Radar",version="0.5.0",lifespan=lifespan)
+    app = FastAPI(title="Kakao Radar",version="0.6.0",lifespan=lifespan)
     app.state.store = store
     analysis = AnalysisStore(store)
     app.state.analysis = analysis
@@ -100,7 +100,7 @@ def create_app(dsn=None, digest_links=None):
 
     @app.get("/health")
     def health():
-        return {"status":"ok","version":"0.5.0"}
+        return {"status":"ok","version":"0.6.0"}
 
     @app.post("/v1/messages/batch")
     async def batch(request: Request, device=Depends(principal)):
@@ -137,6 +137,11 @@ def create_app(dsn=None, digest_links=None):
     @app.get("/v1/status")
     def status(device=Depends(principal)):
         return store.status(device)
+
+    @app.get("/v1/latency")
+    def latency(device=Depends(principal)):
+        from .latency import report
+        return report(store,device)
 
     @app.delete("/v1/rooms/{room_id}/data")
     def delete(room_id: UUID,device=Depends(principal)):
@@ -214,7 +219,8 @@ def create_app(dsn=None, digest_links=None):
 
     @app.get("/v1/delivery/status")
     def delivery_status(device=Depends(principal)):
-        return {**delivery.status(device), "channel": "ntfy", **channel_readiness(), "digest_links_configured": links.enabled}
+        channel = delivery.policy(device)["policy"]["channel"]
+        return {**delivery.status(device), "channel": channel, **channel_readiness(channel), "digest_links_configured": links.enabled}
 
     @app.get("/v1/delivery/preview")
     def delivery_preview(device=Depends(principal)):
@@ -261,6 +267,16 @@ def create_app(dsn=None, digest_links=None):
         result.pop("device_id")
         return JSONResponse(content=jsonable_encoder(result),
                             headers={"Cache-Control":"no-store","Referrer-Policy":"no-referrer"})
+
+    @app.post("/v1/digests/{delivery_id}/opened")
+    def digest_opened(delivery_id: UUID,authorization: str | None=Header(default=None)):
+        link_signature(delivery_id,authorization)
+        result = delivery.digest(delivery_id)
+        if result is None:
+            raise HTTPException(404,"Digest unavailable")
+        from .latency import mark_opened
+        mark_opened(store,delivery_id,result['device_id'])
+        return JSONResponse({'recorded':True},headers={'Cache-Control':'no-store'})
 
     @app.put("/v1/digests/{delivery_id}/summaries/{summary_id}/feedback",openapi_extra=body_schema(FeedbackUpdate))
     async def digest_feedback(delivery_id: UUID,summary_id: UUID,request: Request,authorization: str | None=Header(default=None)):

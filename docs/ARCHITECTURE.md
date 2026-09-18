@@ -1,6 +1,8 @@
 # 카톡 요약 서비스 — 아키텍처 검토안
 
-작성일: 2026-09-16 · 갱신: 2026-09-17 · 상태: Android 0.3.0 / 서버 0.5.0 M4 선행 구현, M1 실측·외부 AI·본폰 연결·사용자 평가 대기
+작성일: 2026-09-16 · 갱신: 2026-09-17 · 상태: Android 0.3.1 / 서버 0.6.0 WSL 실운영 통합
+
+현재 흐름은 Redmi 알림 → Room/WorkManager → USB ADB reverse → WSL `127.0.0.1:8443` HTTPS → PostgreSQL 16 → OpenAI Responses → 근거 검증·비용 정산 → Telegram 발송 큐다. 외부 공개 서버는 없다. 관리 API는 WSL loopback 8000, 폰 HTTPS는 loopback 8443이다. 데이터베이스는 Unix socket peer 인증이며 전용 서비스 계정은 superuser가 아니다. OpenAI/Telegram 비밀은 필요한 Worker에만 읽힌다. 정기 발송은 23:00 Asia/Seoul, 하루 1회이고 urgent 기본 비활성이다. 이전 ntfy 어댑터는 유지되며 현재 선택은 Telegram이다. 자세한 운영·잔여 조건은 [WSL_RUNTIME.md](WSL_RUNTIME.md)를 따른다.
 
 ## M3 구현 상태
 

@@ -35,10 +35,13 @@ def tokens(text):
     return set(re.findall(r"[a-z0-9_]{2,}|[가-힣]{2,}", text)) - {"그리고", "그런데", "오늘", "the", "and"}
 
 
-def prepare_topics(messages: list[CapturedMessage]) -> tuple[Topic, ...]:
+def prepare_topics(messages: list[CapturedMessage], preserve_reactions=False) -> tuple[Topic, ...]:
     groups: list[list[CapturedMessage]] = []
     for message in messages:
         if CHATTER.fullmatch(message.text.strip()) and not message.urls:
+            if preserve_reactions and groups and re.fullmatch(r"[ㅋㅎ\s!?~.]+", message.text.strip()) and abs(message.observed_at-groups[-1][-1].observed_at)<=120000:
+                # Visible laughter is context, not a reaction-button count or consensus.
+                groups[-1].append(message)
             continue
         urls = {canonical_url(u) for u in message.urls}
         words = tokens(message.text)

@@ -15,6 +15,8 @@ class DeliveryWorker:
         self.delivery, self.channel = delivery, channel
 
     def process(self, device):
+        if self.delivery.policy(device)["policy"]["channel"] != self.channel.name:
+            return "channel_mismatch"
         # Recover a stale send before planning, otherwise its active row blocks planning.
         self.delivery.status(device)
         self.delivery.plan(device)
@@ -33,16 +35,20 @@ class DeliveryWorker:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--provider", choices=["disabled", "ntfy"], default=os.environ.get("RADAR_DELIVERY_PROVIDER", "disabled"))
+    parser.add_argument("--provider", choices=["disabled", "ntfy", "telegram"], default=os.environ.get("RADAR_DELIVERY_PROVIDER", "disabled"))
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
-    if args.provider not in ("disabled", "ntfy"):
+    if args.provider not in ("disabled", "ntfy", "telegram"):
         parser.exit(1, "Unknown delivery provider\n")
     if args.provider == "disabled":
         print("Delivery disabled")
         return
     try:
-        channel = NtfyChannel.from_env()
+        if args.provider == "telegram":
+            from .telegram_channel import TelegramChannel
+            channel = TelegramChannel.from_env()
+        else:
+            channel = NtfyChannel.from_env()
     except (ChannelConfigurationError, ValueError):
         parser.exit(1, "Delivery channel configuration is incomplete or invalid\n")
     store = Store(os.environ["RADAR_DATABASE_URL"])

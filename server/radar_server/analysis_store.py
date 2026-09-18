@@ -194,7 +194,7 @@ class AnalysisStore:
             return usage.tokens <= reservation["tokens_reserved"] and usage.cost_microusd <= reservation["cost_reserved"]
 
     def fail(self, claim, code, permanent=False):
-        safe_codes = {"provider_unavailable", "invalid_output", "invalid_usage", "input_too_large", "output_limit", "source_expired", "budget_overrun"}
+        safe_codes = {"provider_unavailable", "provider_auth", "provider_rate_limited", "provider_request_rejected", "provider_refusal", "invalid_output", "invalid_usage", "input_too_large", "output_limit", "source_expired", "budget_overrun"}
         code = code if code in safe_codes else "provider_unavailable"
         with self.store.connect() as db:
             job = self._owned(db, claim)

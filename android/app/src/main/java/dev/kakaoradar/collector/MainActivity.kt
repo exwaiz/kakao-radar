@@ -46,7 +46,7 @@ class MainActivity : Activity() {
         setContentView(scroll)
         root.addView(label("KAKAO RADAR   /   수집 검증", 12, Color.rgb(8, 127, 114)))
         root.addView(label("놓친 대화의 흐름을\n모으는 첫 단계", 28).apply { setTypeface(null, Typeface.BOLD) })
-        root.addView(label("0.3.0 · 알림 수집과 선택한 서버 동기화", 13))
+        root.addView(label("0.3.1 · 알림 수집과 선택한 서버 동기화", 13))
 
         val overview = card(root)
         status = label("상태 확인 중", 18).also { overview.addView(it) }

@@ -69,5 +69,6 @@
     document.querySelector("h1").textContent = data.title;
     status.textContent = data.status === "uncertain" ? "이 요약의 채널 발송 결과는 아직 확인되지 않았습니다." : "";
     data.topics.forEach(show);
+    request(`${endpoint}/opened`, { method: "POST" }).catch(() => {});
   }).catch(() => { status.textContent = "요약을 열 수 없습니다. 링크 만료, 데이터 삭제 또는 연결 상태를 확인하세요."; });
 })();

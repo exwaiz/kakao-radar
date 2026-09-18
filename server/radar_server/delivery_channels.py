@@ -139,9 +139,13 @@ class NtfyChannel:
             return ChannelResult("uncertain", "response_lost")
 
 
-def channel_readiness():
+def channel_readiness(provider="ntfy"):
     try:
-        channel = NtfyChannel.from_env()
+        if provider == "telegram":
+            from .telegram_channel import TelegramChannel
+            channel = TelegramChannel.from_env()
+        else:
+            channel = NtfyChannel.from_env()
         return {"configured": True, "digest_links_configured": channel.links.enabled}
     except (ChannelConfigurationError, ValueError):
         return {"configured": False, "digest_links_configured": False}

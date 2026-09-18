@@ -71,6 +71,7 @@ def summary(setup, title="합성 배포 일정", room=None, **changes):
 
 
 class StubChannel:
+    name = "ntfy"
     def __init__(self, result=None, callback=None):
         self.result = result or ChannelResult("accepted", message_id="syntheticId1")
         self.callback, self.calls = callback, 0
@@ -80,6 +81,141 @@ class StubChannel:
         if self.callback:
             self.callback(claim)
         return self.result
+
+
+def test_urgent_threshold_schedule_and_cooldown(setup):
+    _, store, _, delivery, device, _, _, _ = setup
+    policy(setup, urgent_enabled=True)
+    summary(setup, importance=89)
+    assert delivery.plan(device) is None
+    summary(setup, title="합성 긴급 변경", importance=95)
+    before = delivery.policy(device)["next_due_at"]
+    identifier = delivery.plan(device)
+    assert identifier and delivery.policy(device)["next_due_at"] == before
+    with store.connect() as db:
+        row = db.execute("SELECT kind,payload FROM delivery_outbox WHERE delivery_id=%s", (identifier,)).fetchone()
+        assert row["kind"] == "urgent" and len(row["payload"]["topics"]) == 1
+    assert DeliveryWorker(delivery, StubChannel()).process(device) == "accepted"
+    summary(setup, title="합성 추가 긴급 변경", importance=99)
+    assert delivery.plan(device) is None
+
+
+def test_urgent_disabled_and_old_candidates_are_not_fast_sent(setup):
+    _, store, _, delivery, device, _, _, _ = setup
+    policy(setup)
+    identifier = summary(setup, importance=99)
+    assert delivery.plan(device) is None
+    with store.connect() as db:
+        db.execute("UPDATE analysis_summaries SET created_at=now()-interval '20 minutes' WHERE summary_id=%s", (identifier,))
+    policy(setup, urgent_enabled=True)
+    assert delivery.plan(device) is None
+    due(setup)
+    assert delivery.plan(device)
+
+
+def test_manual_verification_preserves_schedule_and_shares_daily_quota(setup):
+    _, store, _, delivery, device, _, _, _ = setup
+    policy(setup, daily_notification_limit=1, urgent_enabled=True)
+    summary(setup)
+    before=delivery.policy(device)["next_due_at"]
+    assert delivery.plan(device,manual=True)
+    assert DeliveryWorker(delivery,StubChannel()).process(device)=="accepted"
+    assert delivery.policy(device)["next_due_at"]==before
+    summary(setup,title="합성 긴급 추가",importance=99)
+    assert delivery.plan(device)
+    assert delivery.begin_send(device) is None
+    assert delivery.history(device)[0]["last_error"]=="daily_limit"
+
+
+def test_limited_digest_selects_important_information_first(setup):
+    _, store, _, delivery, device, _, _, _=setup
+    policy(setup,max_topics_per_digest=1)
+    summary(setup,title="합성 일반 정보",importance=60)
+    important=summary(setup,title="합성 놓치면 안 될 정보",importance=95)
+    due(setup)
+    identifier=delivery.plan(device)
+    with store.connect() as db:
+        assert db.execute('SELECT summary_id FROM delivery_items WHERE delivery_id=%s',(identifier,)).fetchone()['summary_id']==important
+
+
+def test_temporary_half_hour_schedule_expires_and_cancels_old_queue(setup):
+    from datetime import datetime,timedelta,timezone
+    client,store,_,delivery,device,_,headers,_=setup
+    deadline=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()
+    policy(setup,daily_times=[f'{h:02}:{m:02}' for h in range(24) for m in (0,30)],daily_notification_limit=48,
+        test_mode_until=deadline,resume_daily_times=['23:00'],resume_daily_notification_limit=1,include_source_quotes=True,
+        max_topics_per_digest=3,resume_max_topics_per_digest=5)
+    summary(setup)
+    due(setup)
+    assert delivery.plan(device)
+    with store.connect() as db:
+        config=db.execute('SELECT config FROM delivery_settings WHERE device_id=%s',(device,)).fetchone()['config']
+        config['test_mode_until']=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+        db.execute('UPDATE delivery_settings SET config=%s WHERE device_id=%s',(Jsonb(config),device))
+    restored=client.get('/v1/delivery/policy',headers=headers).json()
+    assert restored['policy']['daily_times']==['23:00']
+    assert restored['policy']['daily_notification_limit']==1 and restored['policy']['include_source_quotes']
+    assert restored['policy']['test_mode_until'] is None
+    assert restored['policy']['max_topics_per_digest']==5 and restored['policy']['resume_max_topics_per_digest'] is None
+    assert delivery.history(device)[0]['status']=='cancelled'
+
+
+def test_quotes_are_exact_live_source_and_not_persisted_in_outbox(setup):
+    client,store,_,delivery,device,room,headers,_=setup
+    event=uuid4()
+    original='합성 당시 대사: 일정이 화요일로 바뀌었어요. 다들 공지 한번 확인해 주세요. '+('추가 합성 문맥 '*20)
+    message={'event_id':str(event),'room_id':str(room),'sender_alias':'a'*64,'text':original,
+        'source_time':12345,'observed_at':int(time.time()*1000),'urls':[],'quality':'structured','parser_version':2}
+    assert client.post('/v1/messages/batch',headers=headers,json={'items':[message]}).status_code==200
+    policy(setup,include_source_quotes=True)
+    summary(setup,points=[{'text':'합성 변경된 일정 안내','evidence_ids':[str(event)]}])
+    due(setup)
+    identifier=delivery.plan(device)
+    claim=delivery.begin_send(device)
+    quote=claim.payload['topics'][0]['payload']['quotes'][0]
+    assert quote['text']==original[:80] and quote['truncated']
+    assert quote['observed_at']==message['observed_at']
+    with store.connect() as db:
+        stored=db.execute('SELECT payload FROM delivery_outbox WHERE delivery_id=%s',(identifier,)).fetchone()['payload']
+        assert 'quotes' not in stored['topics'][0]['payload']
+
+
+def test_quote_lookup_never_reads_another_room(setup):
+    client,store,_,delivery,device,room,headers,_=setup
+    other,event=uuid4(),uuid4()
+    store.provision(device,other,headers['Authorization'][7:])
+    message={'event_id':str(event),'room_id':str(other),'sender_alias':'a'*64,'text':'다른 방 합성 비공개 대사',
+        'source_time':12345,'observed_at':int(time.time()*1000),'urls':[],'quality':'structured','parser_version':2}
+    assert client.post('/v1/messages/batch',headers=headers,json={'items':[message]}).status_code==200
+    policy(setup,include_source_quotes=True)
+    summary(setup,points=[{'text':'합성 잘못 연결된 근거','evidence_ids':[str(event)]}])
+    due(setup)
+    delivery.plan(device)
+    assert delivery.begin_send(device).payload['topics'][0]['payload']['quotes']==[]
+
+
+def test_latency_auth_scope_and_first_open_are_measured(setup):
+    client, store, _, delivery, device, _, headers, links = setup
+    assert client.get("/v1/latency").status_code == 401
+    identifier, _ = prepare(setup)
+    assert DeliveryWorker(delivery, StubChannel()).process(device) == "accepted"
+    url = links.url(identifier)
+    from urllib.parse import urlsplit
+    signature = urlsplit(url).fragment
+    # The fragment format is documented by DigestLinks; extract its token.
+    signature = signature.removeprefix("key=")
+    auth = {"Authorization":"Digest " + signature}
+    path = f"/v1/digests/{identifier}/opened"
+    assert client.post(path).status_code == 404
+    assert client.post(path, headers=auth).status_code == 200
+    with store.connect() as db:
+        first = db.execute("SELECT opened_at FROM delivery_outbox WHERE delivery_id=%s", (identifier,)).fetchone()["opened_at"]
+    assert client.post(path, headers=auth).status_code == 200
+    with store.connect() as db:
+        assert db.execute("SELECT opened_at FROM delivery_outbox WHERE delivery_id=%s", (identifier,)).fetchone()["opened_at"] == first
+    result = client.get("/v1/latency", headers=headers).json()
+    assert result["delivery"]["accepted"] == result["delivery"]["opened"] == 1
+    assert result["handset_notification_display_measured"] is False
 
 
 def prepare(setup, **settings):

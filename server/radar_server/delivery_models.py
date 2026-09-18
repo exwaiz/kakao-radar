@@ -14,25 +14,35 @@ from .analysis_models import InterestProfile, StrictModel
 
 class DeliveryPolicy(StrictModel):
     enabled: bool = False
-    channel: Literal["ntfy"] = "ntfy"
+    channel: Literal["ntfy", "telegram"] = "ntfy"
     timezone: str = "Asia/Seoul"
-    daily_times: list[str] = Field(default_factory=list, max_length=24)
+    daily_times: list[str] = Field(default_factory=list, max_length=144)
     quiet_start: str | None = None
     quiet_end: str | None = None
-    daily_notification_limit: int = Field(default=0, ge=0, le=24)
+    daily_notification_limit: int = Field(default=0, ge=0, le=144)
+    include_source_quotes: bool = False
+    test_mode_until: str | None = None
+    resume_daily_times: list[str] | None = Field(default=None,max_length=144)
+    resume_daily_notification_limit: int | None = Field(default=None,ge=1,le=144)
+    resume_max_topics_per_digest: int | None = Field(default=None,ge=1,le=10)
     max_topics_per_digest: int = Field(default=5, ge=1, le=10)
     max_summary_age_hours: int = Field(default=72, ge=1, le=2160)
     dedup_hours: int = Field(default=24, ge=1, le=2160)
     max_attempts: int = Field(default=3, ge=1, le=5)
+    urgent_enabled: bool = False
+    urgent_importance_threshold: int = Field(default=90, ge=70, le=100)
+    urgent_cooldown_seconds: int = Field(default=300, ge=300, le=86400)
 
     @field_validator("timezone")
     @classmethod
     def zone(cls, value):
         return InterestProfile.valid_timezone(value)
 
-    @field_validator("daily_times")
+    @field_validator("daily_times", "resume_daily_times")
     @classmethod
     def times(cls, values):
+        if values is None:
+            return None
         for value in values:
             parse_time(value)
         if len(set(values)) != len(values):
@@ -48,6 +58,15 @@ class DeliveryPolicy(StrictModel):
 
     @model_validator(mode="after")
     def complete_settings(self):
+        if self.resume_max_topics_per_digest is not None and self.test_mode_until is None:
+            raise ValueError('Topic count restoration requires a temporary schedule')
+        temporary = (self.test_mode_until,self.resume_daily_times,self.resume_daily_notification_limit)
+        if any(value is not None for value in temporary):
+            if any(value is None for value in temporary) or not self.resume_daily_times:
+                raise ValueError('Temporary schedule requires an expiry and complete resume settings')
+            deadline = datetime.fromisoformat(self.test_mode_until)
+            if deadline.tzinfo is None or deadline.utcoffset() is None:
+                raise ValueError('Temporary schedule expiry requires a timezone')
         if (self.quiet_start is None) != (self.quiet_end is None):
             raise ValueError("Both quiet-hour endpoints are required")
         if self.quiet_start is not None and self.quiet_start == self.quiet_end:

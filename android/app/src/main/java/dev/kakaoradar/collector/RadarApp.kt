@@ -29,7 +29,11 @@ class RadarApp : Application() {
         db = Room.databaseBuilder(this, RadarDatabase::class.java, "radar.db")
             .addMigrations(RadarDatabase.MIGRATION_1_2, RadarDatabase.MIGRATION_2_3).build()
         io.execute { runCatching { prune() }.onFailure { config.error = "저장소 정리 실패" } }
+        consumeDebugSyncSetup()
         if (syncSettings.enabled) SyncScheduler.schedule(this)
+        // Restore an already granted listener after an app update/process restart.
+        runCatching { android.service.notification.NotificationListenerService.requestRebind(
+            android.content.ComponentName(this, CollectorService::class.java)) }
     }
 
     fun prune() {

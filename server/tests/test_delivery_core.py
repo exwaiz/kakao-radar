@@ -26,7 +26,7 @@ def topic(**changes):
     {"enabled": True}, {"daily_times": ["8:30"]}, {"daily_times": ["24:00"]},
     {"daily_times": ["08:00", "08:00"]}, {"quiet_start": "23:00"},
     {"quiet_start": "00:00", "quiet_end": "00:00"}, {"timezone": "synthetic-invalid-zone"},
-    {"channel": "telegram"}, {"daily_notification_limit": True},
+    {"channel": "unsupported"}, {"daily_notification_limit": True},
 ])
 def test_invalid_policy(changes):
     with pytest.raises(ValidationError):
@@ -53,6 +53,14 @@ def test_schedule_and_midnight():
     policy = DeliveryPolicy(daily_times=["00:00", "08:30"])
     assert next_slot(policy, instant("2026-09-17T14:59:59")) == instant("2026-09-17T15:00:00")
     assert next_slot(policy, instant("2026-09-17T15:00:00")) == instant("2026-09-17T23:30:00")
+
+
+def test_ten_minute_test_schedule_and_bounds():
+    policy=DeliveryPolicy(enabled=True,daily_times=[f'{h:02}:{m:02}' for h in range(24) for m in range(0,60,10)],daily_notification_limit=144)
+    assert len(policy.daily_times)==144
+    assert next_slot(policy,instant('2026-09-17T22:50:01'))==instant('2026-09-17T23:00:00')
+    with pytest.raises(ValidationError):
+        DeliveryPolicy(daily_notification_limit=145)
 
 
 def test_dst_missing_time_moves_forward_and_repeated_time_runs_once():

@@ -1,6 +1,7 @@
 """Transactional M4 outbox. Network I/O always happens outside DB transactions."""
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
+from copy import deepcopy
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -37,10 +38,26 @@ class DeliveryStore:
         if not db.execute("SELECT device_id FROM devices WHERE device_id=%s AND active FOR UPDATE", (device,)).fetchone():
             raise PermissionError("Device revoked")
 
-    @staticmethod
-    def _settings(db, device):
+    @classmethod
+    def _settings(cls, db, device):
         row = db.execute("SELECT * FROM delivery_settings WHERE device_id=%s", (device,)).fetchone()
-        return (row["version"], DeliveryPolicy.model_validate(row["config"]), row["next_due_at"]) if row else (0, DeliveryPolicy(), None)
+        if not row:
+            return 0, DeliveryPolicy(), None
+        policy = DeliveryPolicy.model_validate(row['config'])
+        now = cls._now(db)
+        if policy.test_mode_until and now >= datetime.fromisoformat(policy.test_mode_until):
+            policy = DeliveryPolicy.model_validate({**policy.model_dump(),
+                'daily_times':policy.resume_daily_times,'daily_notification_limit':policy.resume_daily_notification_limit,
+                'max_topics_per_digest':policy.resume_max_topics_per_digest or policy.max_topics_per_digest,
+                'test_mode_until':None,'resume_daily_times':None,'resume_daily_notification_limit':None,'resume_max_topics_per_digest':None})
+            row['version'] += 1
+            row['next_due_at'] = next_slot(policy,now) if policy.enabled else None
+            db.execute('UPDATE delivery_settings SET version=%s,config=%s,next_due_at=%s,updated_at=clock_timestamp() WHERE device_id=%s',
+                (row['version'],Jsonb(policy.model_dump()),row['next_due_at'],device))
+            pending = db.execute("SELECT delivery_id FROM delivery_outbox WHERE device_id=%s AND status IN ('pending','retry_wait')",(device,)).fetchall()
+            for entry in pending:
+                cls._cancel(db,entry['delivery_id'],'test_period_ended')
+        return row['version'],policy,row['next_due_at']
 
     def policy(self, device):
         with self.store.connect() as db:
@@ -79,16 +96,18 @@ class DeliveryStore:
         return [row["device_id"] for row in rows]
 
     @staticmethod
-    def _topics(db, device, policy, version, now):
+    def _topics(db, device, policy, version, now, urgent=False):
         rows = db.execute("""SELECT s.summary_id,j.room_id,s.payload,s.created_at
             FROM analysis_summaries s JOIN analysis_jobs j USING(job_id)
             JOIN rooms r ON r.device_id=j.device_id AND r.room_id=j.room_id
             WHERE j.device_id=%s AND r.allowed AND j.status='completed' AND j.profile_version=%s
             AND s.is_candidate AND s.created_at >= %s
+            AND (NOT %s OR ((s.payload->>'importance')::int >= %s AND s.created_at >= %s))
             AND NOT EXISTS(SELECT 1 FROM delivery_items i WHERE i.device_id=%s AND i.summary_id=s.summary_id)
             AND NOT EXISTS(SELECT 1 FROM summary_feedback f WHERE f.device_id=%s AND f.summary_id=s.summary_id AND f.rating='not_interested')
-            ORDER BY s.created_at,s.summary_id LIMIT 1000""",
-                          (device, version, now - timedelta(hours=policy.max_summary_age_hours), device, device)).fetchall()
+            ORDER BY (s.payload->>'importance')::int DESC,(s.payload->>'relevance')::int DESC,s.created_at DESC,s.summary_id LIMIT 1000""",
+                          (device, version, now - timedelta(hours=policy.max_summary_age_hours), urgent,
+                           policy.urgent_importance_threshold, now - timedelta(minutes=15), device, device)).fetchall()
         recent = db.execute("""SELECT i.fingerprint FROM delivery_items i JOIN delivery_outbox o USING(delivery_id)
             WHERE i.device_id=%s AND o.created_at >= %s AND o.status IN ('pending','sending','retry_wait','accepted','uncertain')""",
                             (device, now - timedelta(hours=policy.dedup_hours))).fetchall()
@@ -112,26 +131,35 @@ class DeliveryStore:
             topics = self._topics(db, device, policy, version, self._now(db)) if profile.enabled else []
         return {"preview": True, **render_digest(topics)}
 
-    def plan(self, device):
+    def plan(self, device, *, manual=False):
         with self.store.connect() as db:
             self._device(db, device)
             version, policy, due = self._settings(db, device)
             profile_version, profile = AnalysisStore._profile(db, device)
             now = self._now(db)
-            if not policy.enabled or not profile.enabled or due is None or due > now:
+            if not policy.enabled or not profile.enabled or due is None:
+                return None
+            scheduled = due <= now
+            if not scheduled and not manual and not policy.urgent_enabled:
                 return None
             if db.execute("SELECT 1 FROM delivery_outbox WHERE device_id=%s AND status IN ('pending','sending','retry_wait')", (device,)).fetchone():
                 return None
-            topics = self._topics(db, device, policy, profile_version, now)
+            if not scheduled and not manual and db.execute("""SELECT 1 FROM delivery_outbox WHERE device_id=%s AND kind='urgent'
+                AND created_at>=%s AND status IN ('pending','sending','retry_wait','accepted','uncertain')""",
+                    (device, now - timedelta(seconds=policy.urgent_cooldown_seconds))).fetchone():
+                return None
+            topics = self._topics(db, device, policy, profile_version, now, urgent=not scheduled and not manual)
             # Downtime produces one catch-up digest, never one notification per missed slot.
-            db.execute("UPDATE delivery_settings SET next_due_at=%s WHERE device_id=%s", (next_slot(policy, now), device))
+            if scheduled:
+                db.execute("UPDATE delivery_settings SET next_due_at=%s WHERE device_id=%s", (next_slot(policy, now), device))
             if not topics:
                 return None
             delivery = uuid4()
             payload = render_digest(topics, delivery)
-            db.execute("""INSERT INTO delivery_outbox(delivery_id,device_id,settings_version,profile_version,status,payload,slot_at,not_before)
-                VALUES(%s,%s,%s,%s,'pending',%s,%s,%s)""",
-                       (delivery, device, version, profile_version, Jsonb(payload), due, after_quiet(policy, now)))
+            db.execute("""INSERT INTO delivery_outbox(delivery_id,device_id,settings_version,profile_version,status,payload,slot_at,not_before,kind)
+                VALUES(%s,%s,%s,%s,'pending',%s,%s,%s,%s)""",
+                       (delivery, device, version, profile_version, Jsonb(payload), due if scheduled else now,
+                        after_quiet(policy, now), 'manual' if manual else ('scheduled' if scheduled else 'urgent')))
             for topic in topics:
                 db.execute("INSERT INTO delivery_items(delivery_id,device_id,summary_id,room_id,fingerprint) VALUES(%s,%s,%s,%s,%s)",
                            (delivery, device, UUID(topic["summary_id"]), UUID(topic["room_id"]), topic["fingerprint"]))
@@ -149,6 +177,12 @@ class DeliveryStore:
             version, policy, _ = self._settings(db, device)
             now = self._now(db)
             self._recover(db, device, now)
+            profile_version, profile = AnalysisStore._profile(db, device)
+            stale = db.execute("""SELECT delivery_id FROM delivery_outbox WHERE device_id=%s
+                AND status IN ('pending','retry_wait') AND (NOT %s OR NOT %s OR settings_version<>%s OR profile_version<>%s)
+                FOR UPDATE""",(device,policy.enabled,profile.enabled,version,profile_version)).fetchall()
+            for entry in stale:
+                self._cancel(db,entry['delivery_id'],'configuration_changed')
             row = db.execute("""SELECT * FROM delivery_outbox WHERE device_id=%s AND status IN ('pending','retry_wait')
                 AND not_before<=%s ORDER BY created_at,delivery_id LIMIT 1 FOR UPDATE""", (device, now)).fetchone()
             if not row:
@@ -183,7 +217,11 @@ class DeliveryStore:
                        (owner, now + timedelta(seconds=self.lease_seconds), row["delivery_id"]))
             db.execute("INSERT INTO delivery_attempts(attempt_id,delivery_id,device_id,quota_day,outcome) VALUES(%s,%s,%s,%s,'started')",
                        (attempt, row["delivery_id"], device, day))
-        return SendClaim(row["delivery_id"], device, owner, attempt, row["payload"])
+            outgoing = deepcopy(row['payload'])
+            if policy.include_source_quotes:
+                from .source_quotes import attach_quotes
+                attach_quotes(db,device,outgoing)
+        return SendClaim(row["delivery_id"], device, owner, attempt, outgoing)
 
     def finish(self, claim, outcome, code=None, message_id=None, retry_after=0):
         if outcome not in ("accepted", "retry", "failed", "uncertain"):

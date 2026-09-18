@@ -107,3 +107,8 @@ CREATE TABLE IF NOT EXISTS summary_feedback (
 );
 CREATE INDEX IF NOT EXISTS delivery_created ON delivery_outbox(device_id,created_at);
 INSERT INTO schema_versions(version) VALUES(3) ON CONFLICT DO NOTHING;
+
+-- M5 shares the M4 quota, deduplication and unknown-outcome handling.
+ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'scheduled';
+ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ;
+INSERT INTO schema_versions(version) VALUES(4) ON CONFLICT DO NOTHING;
