@@ -236,3 +236,11 @@ Then update DEBUG_NOTES.md with exactly what the code can now observe on the nex
 - **합성 검증:** 서버 183개 + 수집 비교 도구 5개 + Android 단위 테스트 43개 통과. Android assembleDebug/lintDebug 성공(error 0, 기존 warning 9). 폰 APK 업데이트나 새 외부 전송은 실행하지 않았다. 화면 OFF 지연 해결이나 장기 수집률·개인 품질 평가 통과와 구분한다.
 
 - **GitHub 확인:** M3 진단 브랜치와 master 통합 커밋을 게시했다. master 통합 커밋 254639e의 tree 5db6ae967d643c81923cb73299eae1ae057df048가 검증한 로컬 tree와 정확히 일치한다. GitHub 설정의 기본 브랜치를 main→master로 변경하고 연결 도구에서 default_branch=master를 확인했다. 기존 브랜치는 유지한다.
+
+### 2026-09-18 릴리스 게시와 WSL 상태 확인
+
+- GitHub v1.0.0 릴리스를 https://github.com/exwaiz/kakao-radar/releases/tag/v1.0.0 에 게시했다. 태그 대상은 a7957b40f8cf999191444939f06b21fced545206이며 master의 모든 기존 원격 브랜치 head가 ancestor인지 검사했다. 소스 zip/tar 아카이브 2개를 확인했다.
+- APK 빌드·서명 확인은 통과했으나 Chrome 확장의 파일 URL 접근이 허용되지 않아 릴리스 첨부는 실행하지 못했다. 확장 보안 설정은 변경하지 않았고 APK는 로컬 android/app/build/outputs/apk/debug/kakao-radar-1.0.0-debug.apk에 보존했다. 설치된 폰 버전은 유지한다.
+- 기존 WSL 작업 트리가 깨끗하고 tree가 공개 WSL baseline과 일치함을 확인한 뒤 master로 전환했다. API만 재시작했다. 초기 시작 직후 상태 요청은 실패했지만 후속 조회에서 /health status=ok / version=1.0.0, API 재시작 횟수 0, API·로컬 HTTPS·분석·전달·retention 서비스 5개 active를 확인했다. 추가 외부 발송·유료 호출은 실행하지 않았다.
+- 배포 뒤 Telegram policy version=4, 24개 매시 정각 슬롯, 최대 3개·quota 144회·원문 인용 및 9/19 자정 기존 23:00/1회/5개 복귀가 유지됨을 재조회했다. 조회 시 next_due=2026-09-18 15:00:00+09:00.
+- 배포 전/후 상태와 복구 명령은 PC 비공개 battery-focus/runtime-v1-{before,after}.json 및 rollback-runtime-v1.txt에 기록했다. 복구는 기존 feat/wsl-runtime 체크아웃으로 돌아가 API를 재시작하며 DB·앱 데이터 삭제나 다른 Worker 설정 변경이 필요하지 않다.
