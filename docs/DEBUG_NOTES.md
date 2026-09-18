@@ -234,3 +234,5 @@ Then update DEBUG_NOTES.md with exactly what the code can now observe on the nex
 - 변경 전/후 정책과 rollback 스크립트/명령은 PC 비공개 `battery-focus/hourly-telegram-{before,after}.json`, `rollback-hourly-telegram.py`, `rollback-hourly-telegram.txt`에 기록했다. 원문·계정 비밀은 저장소에 추가하지 않았다.
 - GitHub 기존 M1/M2/M3/M4/WSL 구현을 master 기준으로 통합하고 Android versionCode 5 / versionName 1.0.0, 서버 1.0.0을 표시한다. 최신 WSL 기능 코드가 동일하게 보존됐는지 비교했다. 상세 범위는 RELEASE_1_0.md, architecture 결정은 D-017이다.
 - **합성 검증:** 서버 183개 + 수집 비교 도구 5개 + Android 단위 테스트 43개 통과. Android assembleDebug/lintDebug 성공(error 0, 기존 warning 9). 폰 APK 업데이트나 새 외부 전송은 실행하지 않았다. 화면 OFF 지연 해결이나 장기 수집률·개인 품질 평가 통과와 구분한다.
+
+- **GitHub 확인:** M3 진단 브랜치와 master 통합 커밋을 게시했다. master 통합 커밋 254639e의 tree 5db6ae967d643c81923cb73299eae1ae057df048가 검증한 로컬 tree와 정확히 일치한다. GitHub 설정의 기본 브랜치를 main→master로 변경하고 연결 도구에서 default_branch=master를 확인했다. 기존 브랜치는 유지한다.
