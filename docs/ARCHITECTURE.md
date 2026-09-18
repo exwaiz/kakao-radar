@@ -1,6 +1,8 @@
 # 카톡 요약 서비스 — 아키텍처 검토안
 
-작성일: 2026-09-16 · 갱신: 2026-09-17 · 상태: Android 0.3.1 / 서버 0.6.0 WSL 실운영 통합
+작성일: 2026-09-16 · 갱신: 2026-09-18 · 상태: Android 0.3.1 / 서버 0.6.1 WSL 실운영 통합
+
+최신 전달 단계는 **방별 원문 수집 진도 → 새 근거만 남긴 요점 → 원문 ID/내용 해시·요약 지문 중복 제거 → 중요도 선택 → 수집 시각순 표시 → Telegram 수락/불명확과 구간 완료를 함께 커밋**한다. `delivery_progress`와 원문 없는 `delivery_source_receipts`는 schema 5에 추가한다. 완료한 구간의 잔여 후보를 새 업데이트로 보내지 않는다. 새/옛 근거가 섞인 요점은 재작성 없이 제외한다. 인용은 새 근거에서만 가져오고 Telegram은 literal 텍스트와 명시 UTF-16 bold entities로 제목/핵심을 강조한다. 오늘 테스트는 10분/3개/144회, 9/19 자정 정상 23:00/1회/5개 복귀다. D-016과 WSL_RUNTIME.md가 아래 과거 전달 제안보다 우선한다.
 
 현재 흐름은 Redmi 알림 → Room/WorkManager → USB ADB reverse → WSL `127.0.0.1:8443` HTTPS → PostgreSQL 16 → OpenAI Responses → 근거 검증·비용 정산 → Telegram 발송 큐다. 외부 공개 서버는 없다. 관리 API는 WSL loopback 8000, 폰 HTTPS는 loopback 8443이다. 데이터베이스는 Unix socket peer 인증이며 전용 서비스 계정은 superuser가 아니다. OpenAI/Telegram 비밀은 필요한 Worker에만 읽힌다. 정기 발송은 23:00 Asia/Seoul, 하루 1회이고 urgent 기본 비활성이다. 이전 ntfy 어댑터는 유지되며 현재 선택은 Telegram이다. 자세한 운영·잔여 조건은 [WSL_RUNTIME.md](WSL_RUNTIME.md)를 따른다.
 

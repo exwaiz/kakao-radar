@@ -1,4 +1,4 @@
-"""Telegram plain-text delivery. Credentials and API bodies never appear in logs."""
+"""Telegram text with explicit formatting entities; quotes remain literal text."""
 import json
 import os
 import re
@@ -8,6 +8,63 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .delivery_channels import ChannelConfigurationError, ChannelResult, DigestLinks
+
+
+def utf16_length(text):
+    return len(text.encode('utf-16-le'))//2
+
+
+def excerpt(text,limit):
+    return text.encode('utf-16-le')[:limit*2].decode('utf-16-le',errors='ignore')
+
+
+def format_message(payload):
+    lines=[]
+    entities=[]
+    units=0
+    def append(text,bold=False):
+        nonlocal units
+        if lines:
+            units+=1
+        if bold and text:
+            entities.append({'type':'bold','offset':units,'length':utf16_length(text)})
+        lines.append(text)
+        units+=utf16_length(text)
+    append('📡 '+excerpt(payload['title'],120),True)
+    topics=payload.get('topics',[])
+    if not topics:
+        append('')
+        append(excerpt(payload['message'],3800-units))
+        return '\n'.join(lines),entities
+    append('방에서 공유된 주장입니다. 외부 사실 검증은 하지 않았습니다.')
+    per_topic=(3900-units)//len(topics)
+    for index,topic in enumerate(topics,1):
+        summary=topic['payload']
+        quotes=summary.get('quotes',[])[:2 if len(topics)<=5 else 1]
+        point_limit=max(16,min(100 if quotes else 150,(per_topic-(440 if len(quotes)==2 else 320 if quotes else 185))//3))
+        append('')
+        icon='🔥' if summary.get('importance',0)>=90 else '📌'
+        append(f"{icon} {index}. "+excerpt(summary['title'],90),True)
+        if type(topic.get('source_from')) is int and type(topic.get('source_through')) is int:
+            zone=ZoneInfo('Asia/Seoul')
+            first=datetime.fromtimestamp(topic['source_from']/1000,timezone.utc).astimezone(zone)
+            last=datetime.fromtimestamp(topic['source_through']/1000,timezone.utc).astimezone(zone)
+            append('🕒 '+first.strftime('%m/%d %H:%M')+'–'+last.strftime('%m/%d %H:%M')+' 수집')
+        for number,point in enumerate(summary['points'][:3]):
+            append('· '+excerpt(point['text'],point_limit),bold=number==0)
+        for quote in quotes:
+            stamp=''
+            if type(quote.get('observed_at')) is int:
+                observed=datetime.fromtimestamp(quote['observed_at']/1000,timezone.utc).astimezone(ZoneInfo('Asia/Seoul'))
+                stamp=observed.strftime(' (%m/%d %H:%M 수집)')
+            snippet=excerpt(quote['text'],80)
+            append('💬 원문 인용'+stamp+': “'+snippet+'”'+(' …' if quote.get('truncated') or snippet!=quote['text'] else ''))
+        if summary['uncertainty']!='none':
+            append('⚠️ 미확인 정보 · 문맥 제한')
+    text='\n'.join(lines)
+    if utf16_length(text)>4000:
+        raise ValueError('Digest exceeds Telegram text limit')
+    return text,entities
 
 
 class TelegramChannel:
@@ -27,27 +84,9 @@ class TelegramChannel:
                    DigestLinks.from_env() if os.environ.get("RADAR_PUBLIC_URL") else DigestLinks())
 
     def publish(self, claim):
-        # No parse_mode: untrusted chat cannot turn into markup or hidden links.
-        text = claim.payload["title"] + "\n\n" + claim.payload["message"]
-        if claim.payload.get('topics'):
-            lines = [claim.payload['title'], '', '방에서 공유된 주장입니다. 외부 사실 검증은 하지 않았습니다.']
-            topics = claim.payload['topics']
-            quoted = any(t['payload'].get('quotes') for t in topics)
-            point_limit = max(40,min(100 if quoted else 150,(3600//len(topics)-(290 if quoted else 110))//3))
-            for index, topic in enumerate(topics,1):
-                summary = topic['payload']
-                lines.append(f"\n{index}. {summary['title'][:90]}")
-                lines.extend('· '+point['text'][:point_limit] for point in summary['points'][:3])
-                for quote in summary.get('quotes',[])[:2]:
-                    stamp = ''
-                    if type(quote.get('observed_at')) is int:
-                        observed = datetime.fromtimestamp(quote['observed_at']/1000,timezone.utc).astimezone(ZoneInfo('Asia/Seoul'))
-                        stamp = observed.strftime(' (%m/%d %H:%M 수집)')
-                    lines.append('원문 인용'+stamp+': “'+quote['text']+'”'+(' …' if quote.get('truncated') else ''))
-                if summary['uncertainty'] != 'none':
-                    lines.append('미확인 정보 · 문맥 제한')
-            text = '\n'.join(lines)
-        body = {"chat_id": self.chat_id, "text": text[:4000],
+        # Explicit UTF-16 entities style our own text; source HTML/Markdown is never parsed.
+        text,entities=format_message(claim.payload)
+        body = {"chat_id": self.chat_id, "text": text, 'entities':entities,
                 "link_preview_options": {"is_disabled": True}}
         link = self.links.url(claim.delivery_id)
         if link:

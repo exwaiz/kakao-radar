@@ -1,5 +1,12 @@
 # 검증 결과
 
+## 서버 0.6.1 / 진도·원문 중복·서식 — 2026-09-18 (최신)
+
+- 전용 합성 PostgreSQL `radar_integration_test`: **183 passed / 0 skipped / 0 failed**, 24.78초, 기존 의존성 deprecation 경고 2개. 실제 방 원문은 fixture나 테스트 DB에 사용하지 않았다.
+- 아침 전달 후 늦게 분석한 전날 정보 배제, 다른 요약 표현의 동일 근거 및 새 ID/동일 원문 배제, 한 구간의 중요 후보 선택 후 잔여 후보 이월 금지, 새/옛 근거 혼합 문장 제외와 새 근거 인용, 연결 실패의 진도 미소비, 이관의 최신 시점 복원·반복 안전성, outbox 만료 뒤 진도 보존·방 삭제 정리를 검증했다.
+- Telegram 명시 bold entities의 UTF-16 offset과 비BMP emoji 경계, 원문 HTML/Markdown literal 보존, 3/5/10 주제의 모든 항목 표시·4,000 단위 제한을 검증했다. 기존 M2–M5/quote/quiet/quota/uncertain/삭제 회귀도 통과했다.
+- 실제 WSL 이관/서비스 재시작, 최신 전달 원문 진도 오늘 07:40:07 복원. 새 후보 0이며 빈 업데이트를 과거 내용으로 채우지 않는다. 기존 본인 Telegram에 서비스 변경/서식 테스트 안내 API 수락, 공통 quota 및 이력 기록. 실제 새 대화 요약/본폰 화면 표시 latency 확인과 구분한다.
+
 ## 서버 0.6.0 / WSL 실제 통합 — 2026-09-18 (최신)
 
 - Ubuntu 24.04 native PostgreSQL 16, 전용 disposable `radar_integration_test` DB: **최종 pytest 172 passed / 0 skipped / 0 failed**, 24.67초. 기존 Starlette/FastAPI deprecation 경고 2개. 운영 DB/실제 대화는 이 테스트에 사용하지 않았다.

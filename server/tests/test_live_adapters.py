@@ -9,7 +9,7 @@ from radar_server.analysis_models import AnalysisInput, CapturedMessage, Interes
 from radar_server.delivery_channels import DigestLinks
 from radar_server.openai_provider import OpenAIProvider, strict_schema
 from radar_server.providers import ExtractiveProvider, ProviderFailure
-from radar_server.telegram_channel import TelegramChannel
+from radar_server.telegram_channel import TelegramChannel, format_message, utf16_length
 from radar_server.topics import prepare_topics
 
 
@@ -122,6 +122,7 @@ def test_telegram_plain_text_and_scoped_link():
     def respond(request):
         data = json.loads(request.content)
         assert data['chat_id'] == CHAT and 'parse_mode' not in data
+        assert data['entities'][0]['type']=='bold'
         assert data['link_preview_options']['is_disabled'] is True
         assert '#key=' in data['reply_markup']['inline_keyboard'][0][0]['url']
         return httpx.Response(200,json={'ok':True,'result':{'message_id':42,'chat':{'id':int(CHAT)}}})
@@ -139,6 +140,30 @@ def test_telegram_includes_corrections_beyond_first_point():
         assert '미확인' in data['text']
         return httpx.Response(200,json={'ok':True,'result':{'message_id':42,'chat':{'id':int(CHAT)}}})
     assert TelegramChannel(TOKEN,CHAT,transport=httpx.MockTransport(respond)).publish(item).outcome=='accepted'
+
+
+def test_telegram_bold_entities_use_utf16_offsets_and_never_parse_source_markup():
+    literal='<b>원문</b> & **대사** 😀'
+    payload={'title':'합성 😀 제목','topics':[{'payload':{'title':'중요한 😀 소식','importance':95,
+        'points':[{'text':'핵심 공지 😀 변경'}],'uncertainty':'none','quotes':[{'text':literal,'truncated':False}]}}]}
+    text,entities=format_message(payload)
+    assert literal in text and '🔥' in text and '💬' in text
+    encoded=text.encode('utf-16-le')
+    bold=[encoded[e['offset']*2:(e['offset']+e['length'])*2].decode('utf-16-le') for e in entities]
+    assert any('중요한 😀 소식' in part for part in bold)
+    assert any('핵심 공지 😀 변경' in part for part in bold)
+    assert all(e['type']=='bold' for e in entities)
+
+
+@pytest.mark.parametrize('count',[3,5,10])
+def test_all_topics_fit_with_quotes_and_long_non_bmp_text(count):
+    payload={'title':'합성 테스트','topics':[{'source_from':1789734600000,'source_through':1789734660000,
+        'payload':{'title':'😀'*90,'importance':95,'points':[{'text':'😀'*300}]*3,
+                   'uncertainty':'limited_context','quotes':[{'text':'😀'*80,'truncated':True,'observed_at':1789734600000}]*2}} for _ in range(count)]}
+    text,entities=format_message(payload)
+    assert utf16_length(text)<=4000
+    assert text.count('📌')+text.count('🔥')==count
+    assert all(e['offset']+e['length']<=utf16_length(text) for e in entities)
 
 
 def test_telegram_preserves_exact_quote_text():

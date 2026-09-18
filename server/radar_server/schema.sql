@@ -112,3 +112,39 @@ INSERT INTO schema_versions(version) VALUES(3) ON CONFLICT DO NOTHING;
 ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'scheduled';
 ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ;
 INSERT INTO schema_versions(version) VALUES(4) ON CONFLICT DO NOTHING;
+
+-- Monotonic delivery progress survives summary/outbox expiry; contains no source text.
+CREATE TABLE IF NOT EXISTS delivery_progress (
+ device_id UUID NOT NULL, room_id UUID NOT NULL, observed_through BIGINT NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(device_id,room_id),
+ FOREIGN KEY(device_id,room_id) REFERENCES rooms(device_id,room_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS delivery_source_receipts (
+ device_id UUID NOT NULL, room_id UUID NOT NULL, event_id UUID NOT NULL,
+ content_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(device_id,room_id,event_id),
+ FOREIGN KEY(device_id,room_id) REFERENCES rooms(device_id,room_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS delivery_source_content ON delivery_source_receipts(device_id,room_id,content_hash);
+-- Seed existing accepted/unknown deliveries by original observation time, never analysis time.
+-- Repeated migrations only raise progress, so a later, older report cannot move it back.
+WITH sent AS (
+ SELECT DISTINCT o.device_id,(t->>'room_id')::uuid AS room_id,(e.value)::uuid AS event_id
+ FROM delivery_outbox o CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.payload->'topics','[]')) t
+ CROSS JOIN LATERAL jsonb_array_elements(t->'payload'->'points') p
+ CROSS JOIN LATERAL jsonb_array_elements_text(p->'evidence_ids') e(value)
+ WHERE o.status IN ('sending','accepted','uncertain')
+ AND NOT EXISTS(SELECT 1 FROM schema_versions WHERE version=5)
+), sources AS (
+ SELECT m.* FROM sent s JOIN messages m USING(device_id,room_id,event_id)
+ JOIN rooms r USING(device_id,room_id) WHERE r.allowed
+), seeded AS (
+ INSERT INTO delivery_source_receipts(device_id,room_id,event_id,content_hash)
+ SELECT device_id,room_id,event_id,encode(sha256(convert_to(text,'UTF8')),'hex') FROM sources
+ ON CONFLICT DO NOTHING
+)
+INSERT INTO delivery_progress(device_id,room_id,observed_through)
+SELECT device_id,room_id,max(observed_at) FROM sources GROUP BY device_id,room_id
+ON CONFLICT(device_id,room_id) DO UPDATE SET observed_through=
+ GREATEST(delivery_progress.observed_through,excluded.observed_through);
+INSERT INTO schema_versions(version) VALUES(5) ON CONFLICT DO NOTHING;

@@ -90,6 +90,7 @@ class Store:
         with self.connect() as db:
             deliveries = db.execute("DELETE FROM delivery_outbox WHERE created_at < now()-interval '90 days' AND (status<>'sending' OR lease_until<clock_timestamp())").rowcount
             attempts = db.execute("DELETE FROM delivery_attempts WHERE created_at < now()-interval '90 days'").rowcount
+            db.execute("DELETE FROM delivery_source_receipts WHERE created_at < now()-interval '90 days'")
         return {"expired_messages":messages,"expired_receipts":receipts,
                 "expired_summaries":summaries,"expired_jobs":jobs,"expired_usage":usage,
                 "expired_deliveries":deliveries,"expired_delivery_attempts":attempts}
@@ -101,6 +102,8 @@ class Store:
             db.execute("SELECT device_id FROM devices WHERE device_id=%s FOR UPDATE", (device,))
             DeliveryStore.cancel_room(db,device,room)
             db.execute("UPDATE rooms SET allowed=false WHERE device_id=%s AND room_id=%s", (device,room))
+            db.execute("DELETE FROM delivery_progress WHERE device_id=%s AND room_id=%s",(device,room))
+            db.execute("DELETE FROM delivery_source_receipts WHERE device_id=%s AND room_id=%s",(device,room))
             db.execute("DELETE FROM analysis_jobs WHERE device_id=%s AND room_id=%s", (device,room))
             count = db.execute("DELETE FROM receipts WHERE device_id=%s AND room_id=%s", (device,room)).rowcount
         return count

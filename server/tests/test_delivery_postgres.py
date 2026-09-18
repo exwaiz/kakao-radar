@@ -54,14 +54,29 @@ def due(setup):
         db.execute("UPDATE delivery_settings SET next_due_at=now()-interval '1 minute' WHERE device_id=%s", (device,))
 
 
-def summary(setup, title="합성 배포 일정", room=None, **changes):
-    _, store, analysis, _, device, selected_room, _, _ = setup
+def summary(setup, title="합성 배포 일정", room=None, observed_at=None, **changes):
+    client, store, analysis, _, device, selected_room, headers, _ = setup
     room = room or selected_room
     identifier, job = uuid4(), uuid4()
     version = analysis.profile(device)["version"]
     payload = {"topic_id":"a"*64,"title":title,"points":[{"text":title + "이 공유됐습니다.","evidence_ids":[str(uuid4())]}],
         "relevance":90,"importance":60,"uncertainty":"limited_context","source_urls":["https://example.com/synthetic"],
         "notice":"방에서 공유된 주장입니다. 외부 사실 검증을 수행하지 않았습니다.",**changes}
+    with store.connect() as db:
+        latest=db.execute('SELECT coalesce(max(observed_at),0) AS stamp FROM messages WHERE device_id=%s',(device,)).fetchone()['stamp']
+        existing={str(row['event_id']) for row in db.execute('SELECT event_id FROM messages WHERE device_id=%s',(device,)).fetchall()}
+    stamp=observed_at if observed_at is not None else max(int(time.time()*1000),latest+1)
+    messages=[]
+    for point in payload['points']:
+        for event in point['evidence_ids']:
+            if event in existing:
+                continue
+            messages.append({'event_id':event,'room_id':str(room),'sender_alias':'a'*64,'text':point['text'],
+                'source_time':stamp,'observed_at':stamp,'urls':payload['source_urls'],'quality':'structured','parser_version':2})
+            existing.add(event)
+    if messages:
+        response=client.post('/v1/messages/batch',headers=headers,json={'items':messages})
+        assert response.status_code==200,response.text
     with store.connect() as db:
         db.execute("""INSERT INTO analysis_jobs(job_id,device_id,room_id,profile_version,prompt_version,status,completed_at)
             VALUES(%s,%s,%s,%s,'synthetic-test','completed',now())""", (job, device, room, version))
@@ -190,8 +205,8 @@ def test_quote_lookup_never_reads_another_room(setup):
     policy(setup,include_source_quotes=True)
     summary(setup,points=[{'text':'합성 잘못 연결된 근거','evidence_ids':[str(event)]}])
     due(setup)
-    delivery.plan(device)
-    assert delivery.begin_send(device).payload['topics'][0]['payload']['quotes']==[]
+    assert delivery.plan(device) is None
+    assert delivery.begin_send(device) is None
 
 
 def test_latency_auth_scope_and_first_open_are_measured(setup):
@@ -566,9 +581,11 @@ def test_other_device_history_feedback_and_resolution_are_scoped(setup):
 
 
 def test_raw_evidence_expiry_preserves_digest_with_explicit_missing_evidence(setup):
-    client, _, _, delivery, device, _, _, links = setup
+    client, store, _, delivery, device, _, _, links = setup
     identifier, _ = prepare(setup)
     assert DeliveryWorker(delivery,StubChannel()).process(device) == "accepted"
+    with store.connect() as db:
+        db.execute('DELETE FROM messages WHERE device_id=%s',(device,))
     result = client.get(f"/v1/digests/{identifier}",headers={"Authorization":"Digest "+links.token(identifier)}).json()
     assert result["topics"][0]["evidence"][0]["availability"] == "raw_expired"
 
@@ -612,3 +629,128 @@ def test_repeated_migration_preserves_m4_outbox_quota_and_feedback(setup):
     assert delivery.history(device)[0]["status"] == "accepted"
     assert delivery.status(device)["attempts_today"] == 1
     assert delivery.feedback_list(device)[0]["rating"] == "useful"
+
+
+def test_later_reports_never_return_to_old_sources_even_with_higher_importance(setup):
+    _,store,_,delivery,device,room,_,_=setup
+    policy(setup,max_topics_per_digest=1)
+    morning=int(time.time()*1000)-600000
+    summary(setup,title='합성 오늘 아침 정보',observed_at=morning,importance=99)
+    summary(setup,title='합성 어젯밤 정보',observed_at=morning-8*3600000,importance=90)
+    due(setup)
+    assert DeliveryWorker(delivery,StubChannel()).process(device)=='accepted'
+    summary(setup,title='합성 늦게 분석된 어젯밤 정보',observed_at=morning-7*3600000,importance=100)
+    due(setup)
+    assert delivery.plan(device) is None
+    fresh=summary(setup,title='합성 이후 새 공지',observed_at=morning+1000,importance=60)
+    due(setup)
+    identifier=delivery.plan(device)
+    with store.connect() as db:
+        assert db.execute('SELECT summary_id FROM delivery_items WHERE delivery_id=%s',(identifier,)).fetchone()['summary_id']==fresh
+        assert db.execute('SELECT observed_through FROM delivery_progress WHERE device_id=%s AND room_id=%s',(device,room)).fetchone()['observed_through']==morning
+
+
+def test_different_summary_wording_cannot_repeat_the_same_source_or_copied_text(setup):
+    _,store,_,delivery,device,_,_,_=setup
+    identifier,_=prepare(setup)
+    with store.connect() as db:
+        original=db.execute('SELECT payload FROM delivery_outbox WHERE delivery_id=%s',(identifier,)).fetchone()['payload']['topics'][0]['payload']
+    assert DeliveryWorker(delivery,StubChannel()).process(device)=='accepted'
+    summary(setup,title='합성 모델이 다르게 붙인 제목',points=[{'text':'합성 같은 내용을 다시 요약한 문장',
+        'evidence_ids':original['points'][0]['evidence_ids']}])
+    summary(setup,title='합성 재노출 알림의 다른 제목',points=original['points'])
+    # A new event carrying identical text is also excluded, independent of its summary text.
+    event=uuid4()
+    client,_,_,_,_,room,headers,_=setup
+    with store.connect() as db:
+        stamp=db.execute('SELECT max(observed_at)+1000 AS stamp FROM messages WHERE device_id=%s',(device,)).fetchone()['stamp']
+    message={'event_id':str(event),'room_id':str(room),'sender_alias':'a'*64,'text':original['points'][0]['text'],
+        'source_time':stamp,'observed_at':stamp,'urls':[],'quality':'structured','parser_version':2}
+    assert client.post('/v1/messages/batch',headers=headers,json={'items':[message]}).status_code==200
+    summary(setup,title='합성 동일 원문 새 요약',points=[{'text':'합성 표현만 달라진 요약','evidence_ids':[str(event)]}])
+    due(setup)
+    assert delivery.plan(device) is None
+
+
+def test_digest_consumes_completed_interval_and_does_not_drip_leftover_old_topics(setup):
+    _,store,_,delivery,device,room,_,_=setup
+    policy(setup,max_topics_per_digest=1)
+    stamp=int(time.time()*1000)-60000
+    summary(setup,title='합성 가장 중요한 첫 소식',importance=99,observed_at=stamp)
+    summary(setup,title='합성 같은 구간의 덜 중요한 소식',importance=70,observed_at=stamp+1000)
+    due(setup)
+    assert DeliveryWorker(delivery,StubChannel()).process(device)=='accepted'
+    with store.connect() as db:
+        assert db.execute('SELECT observed_through FROM delivery_progress WHERE device_id=%s AND room_id=%s',(device,room)).fetchone()['observed_through']==stamp+1000
+    due(setup)
+    assert delivery.plan(device) is None
+
+
+def test_mixed_old_and_new_context_only_emits_fully_new_points_and_quotes(setup):
+    _,store,_,delivery,device,_,_,_=setup
+    identifier,_=prepare(setup,include_source_quotes=True)
+    with store.connect() as db:
+        old=db.execute('SELECT payload FROM delivery_outbox WHERE delivery_id=%s',(identifier,)).fetchone()['payload']['topics'][0]['payload']['points'][0]['evidence_ids'][0]
+    assert DeliveryWorker(delivery,StubChannel()).process(device)=='accepted'
+    new=str(uuid4())
+    summary(setup,title='합성 새 정정 내용',points=[
+        {'text':'합성 이전 이야기 반복','evidence_ids':[old]},
+        {'text':'합성 이전과 새 근거를 섞은 문장','evidence_ids':[old,new]},
+        {'text':'합성 일정이 취소됐다는 새 안내','evidence_ids':[new]}])
+    due(setup)
+    assert delivery.plan(device)
+    claim=delivery.begin_send(device)
+    payload=claim.payload['topics'][0]['payload']
+    assert len(payload['points'])==1 and payload['points'][0]['evidence_ids']==[new]
+    assert all(quote['evidence_id']==new for quote in payload['quotes'])
+
+
+def test_rejected_or_cancelled_delivery_does_not_advance_progress(setup):
+    _,store,_,delivery,device,_,_,_=setup
+    identifier,_=prepare(setup)
+    assert DeliveryWorker(delivery,StubChannel(ChannelResult('retry','connection_failed'))).process(device)=='retry'
+    with store.connect() as db:
+        assert db.execute('SELECT count(*) AS n FROM delivery_progress WHERE device_id=%s',(device,)).fetchone()['n']==0
+        db.execute("UPDATE delivery_outbox SET not_before=clock_timestamp()-interval '1 second' WHERE delivery_id=%s",(identifier,))
+    assert DeliveryWorker(delivery,StubChannel()).process(device)=='accepted'
+    with store.connect() as db:
+        assert db.execute('SELECT count(*) AS n FROM delivery_progress WHERE device_id=%s',(device,)).fetchone()['n']==1
+
+
+def test_existing_out_of_order_deliveries_seed_highest_source_time_once(setup):
+    _,store,_,delivery,device,room,_,_=setup
+    policy(setup,max_topics_per_digest=1)
+    stamp=int(time.time()*1000)-60000
+    summary(setup,title='합성 아침 전달',observed_at=stamp)
+    due(setup)
+    assert DeliveryWorker(delivery,StubChannel()).process(device)=='accepted'
+    old=summary(setup,title='합성 뒤늦게 전달한 어젯밤 정보',observed_at=stamp-3600000)
+    with store.connect() as db:
+        original=db.execute('SELECT payload FROM analysis_summaries WHERE summary_id=%s',(old,)).fetchone()['payload']
+        payload={'topics':[{'room_id':str(room),'payload':original}]}
+        db.execute('''INSERT INTO delivery_outbox(delivery_id,device_id,settings_version,profile_version,status,payload,slot_at,not_before)
+            VALUES(%s,%s,1,1,'accepted',%s,now(),now())''',(uuid4(),device,Jsonb(payload)))
+        db.execute('DELETE FROM delivery_progress WHERE device_id=%s',(device,))
+        db.execute('DELETE FROM delivery_source_receipts WHERE device_id=%s',(device,))
+        db.execute('DELETE FROM schema_versions WHERE version=5')
+    store.migrate()
+    store.migrate()
+    with store.connect() as db:
+        row=db.execute('SELECT observed_through FROM delivery_progress WHERE device_id=%s AND room_id=%s',(device,room)).fetchone()
+        assert row['observed_through']==stamp
+    summary(setup,title='합성 뒤늦게 생성된 어젯밤 요약',observed_at=stamp-3600000)
+    due(setup)
+    assert delivery.plan(device) is None
+
+
+def test_accepted_progress_survives_outbox_retention_but_room_delete_wipes_it(setup):
+    _,store,_,delivery,device,room,_,_=setup
+    identifier,_=prepare(setup)
+    assert DeliveryWorker(delivery,StubChannel()).process(device)=='accepted'
+    with store.connect() as db:
+        db.execute('DELETE FROM delivery_outbox WHERE delivery_id=%s',(identifier,))
+        assert db.execute('SELECT count(*) AS n FROM delivery_progress WHERE device_id=%s',(device,)).fetchone()['n']==1
+    store.delete_room(device,room)
+    with store.connect() as db:
+        assert db.execute('SELECT count(*) AS n FROM delivery_progress WHERE device_id=%s',(device,)).fetchone()['n']==0
+        assert db.execute('SELECT count(*) AS n FROM delivery_source_receipts WHERE device_id=%s',(device,)).fetchone()['n']==0

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from psycopg.types.json import Jsonb
 
 from .analysis_store import AnalysisStore, VersionConflict
+from .delivery_progress import project_fresh, record_delivery, windows
 from .delivery_models import (DeliveryPolicy, after_quiet, fingerprint, next_day,
                               next_slot, render_digest)
 
@@ -112,15 +113,24 @@ class DeliveryStore:
             WHERE i.device_id=%s AND o.created_at >= %s AND o.status IN ('pending','sending','retry_wait','accepted','uncertain')""",
                             (device, now - timedelta(hours=policy.dedup_hours))).fetchall()
         seen, topics = {r["fingerprint"] for r in recent}, []
-        for row in rows:
+        eligible=project_fresh(db,device,rows)
+        source_seen=set()
+        for row in eligible:
             signature = fingerprint(row["room_id"], row["payload"])
-            if signature in seen:
+            hashes={(str(row['room_id']),value) for value in row['source_hashes']}
+            if signature in seen or hashes & source_seen:
                 continue
             seen.add(signature)
+            source_seen.update(hashes)
             topics.append({"summary_id": str(row["summary_id"]), "room_id": str(row["room_id"]),
-                           "payload": row["payload"], "fingerprint": signature})
+                           "payload": row["payload"], "fingerprint": signature,
+                           'source_from':row['source_from'],'source_through':row['source_through']})
             if len(topics) == policy.max_topics_per_digest:
                 break
+        topics.sort(key=lambda topic:(topic['source_from'],topic['source_through'],topic['summary_id']))
+        ends=windows(db,device,topics,eligible) if topics else {}
+        for topic in topics:
+            topic['window_through']=ends[topic['room_id']]
         return topics
 
     def preview(self, device):
@@ -156,6 +166,7 @@ class DeliveryStore:
                 return None
             delivery = uuid4()
             payload = render_digest(topics, delivery)
+            payload['source_windows']={topic['room_id']:topic['window_through'] for topic in topics}
             db.execute("""INSERT INTO delivery_outbox(delivery_id,device_id,settings_version,profile_version,status,payload,slot_at,not_before,kind)
                 VALUES(%s,%s,%s,%s,'pending',%s,%s,%s,%s)""",
                        (delivery, device, version, profile_version, Jsonb(payload), due if scheduled else now,
@@ -167,8 +178,9 @@ class DeliveryStore:
 
     def _recover(self, db, device, now):
         rows = db.execute("""UPDATE delivery_outbox SET status='uncertain',last_error='worker_interrupted',owner_token=NULL,lease_until=NULL
-            WHERE device_id=%s AND status='sending' AND lease_until<=%s RETURNING delivery_id""", (device, now)).fetchall()
+            WHERE device_id=%s AND status='sending' AND lease_until<=%s RETURNING delivery_id,payload""", (device, now)).fetchall()
         for row in rows:
+            record_delivery(db,device,row['payload'])
             db.execute("UPDATE delivery_attempts SET outcome='uncertain' WHERE delivery_id=%s AND outcome='started'", (row["delivery_id"],))
 
     def begin_send(self, device):
@@ -239,6 +251,8 @@ class DeliveryStore:
                 return False
             _, policy, _ = self._settings(db, claim.device)
             state = "retry_wait" if outcome == "retry" and row["attempts"] < policy.max_attempts else "failed" if outcome == "retry" else outcome
+            if state in ('accepted','uncertain'):
+                record_delivery(db,claim.device,row['payload'])
             delay = min(86400, max(30 * 2 ** (row["attempts"] - 1), retry_after))
             db.execute("""UPDATE delivery_outbox SET status=%s,last_error=%s,provider_message_id=%s,
                 accepted_at=CASE WHEN %s='accepted' THEN %s ELSE accepted_at END,not_before=%s,
@@ -262,6 +276,7 @@ class DeliveryStore:
                 if row["status"] != "uncertain":
                     raise DeliveryConflict()
                 db.execute("UPDATE delivery_outbox SET status='accepted',accepted_at=%s,last_error='manually_confirmed' WHERE delivery_id=%s", (now, delivery))
+                record_delivery(db,device,row['payload'])
             else:
                 version, policy, _ = self._settings(db, device)
                 profile_version, profile = AnalysisStore._profile(db, device)

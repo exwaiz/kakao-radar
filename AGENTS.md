@@ -6,6 +6,8 @@
 
 ## Current milestone
 
+2026-09-18 최신 품질 피드백: 실제 대사 인용은 유지한다. 같은 원문을 다른 제목/요약으로 재발송하거나 오늘 아침 보고 뒤 어젯밤으로 회귀하지 않는다. 서버 0.6.1/schema 5의 방별 observed_at 진도와 원문 ID/내용 SHA-256 receipt로 새 구간만 전달한다. 수락/결과 불명확 시 완료 구간 전체를 소비하고 탈락한 옛 후보는 다음 슬롯에 이월하지 않는다. 새/옛 근거가 섞인 문장은 재작성 없이 제외한다. Telegram 제목/첫 요점 bold, emoji, 원문 literal 및 수집 시각을 유지한다. 기존 최신 진도 9/18 07:40:07 복원, 183 테스트 통과·WSL 반영·서식 안내 API 수락. 변경 전 canonical GitHub 커밋 `2bf1788`. D-016과 WSL_RUNTIME.md를 읽는다.
+
 2026-09-18 사용자 후속 요청은 유용성 평가를 위한 다량 테스트다. 오늘만 10분마다 최대 3개 주제, 테스트 상한 144회. 9/19 자정에 기존 23:00/하루 1회/최대 5개 주제로 복귀한다. 원문 인용·중복 억제·AI $1/day는 유지하며 사용자 Telegram 실제 수신은 보고로 확인됐다. 정확한 폰 표시 시각을 측정했다고 기록하지 않는다. 이 설정은 아래 처음 정한 30분 테스트보다 최신이다.
 
 **M2–M5 integration on the user's laptop WSL; real selected-room upload, OpenAI analysis and Telegram API acceptance verified.**

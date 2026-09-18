@@ -64,7 +64,7 @@ def create_app(dsn=None, digest_links=None):
     async def lifespan(app):
         store.migrate()
         yield
-    app = FastAPI(title="Kakao Radar",version="0.6.0",lifespan=lifespan)
+    app = FastAPI(title="Kakao Radar",version="0.6.1",lifespan=lifespan)
     app.state.store = store
     analysis = AnalysisStore(store)
     app.state.analysis = analysis
@@ -100,7 +100,7 @@ def create_app(dsn=None, digest_links=None):
 
     @app.get("/health")
     def health():
-        return {"status":"ok","version":"0.6.0"}
+        return {"status":"ok","version":"0.6.1"}
 
     @app.post("/v1/messages/batch")
     async def batch(request: Request, device=Depends(principal)):
