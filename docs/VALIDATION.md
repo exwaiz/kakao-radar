@@ -1,5 +1,12 @@
 # 검증 결과
 
+## v2.0.0 다중 방 구현 — 2026-09-21
+
+- Android versionCode 6 / versionName 2.0.0. 기존 단일 `binding`/`room_id` preference를 동일 ID의 `RoomBinding` 집합으로 승격하며, 두 합성 방의 메시지·snapshot·대기열 통계를 독립 유지하는 Robolectric 테스트를 추가했다.
+- Android `testDebugUnitTest` 45건 통과(실패/오류 0), `assembleDebug`, `lintDebug` 성공. 생성된 `app-debug.apk`는 6,523,394 bytes, SHA-256 `4791c90125937a6b431a637b23427d46a6ac348d2f2feb5c26b644f3f07f4494`다. APK를 실제 폰에 설치하지 않았다.
+- 서버 schema 6에 방 표시명, Telegram route, 방·chat·thread·route version outbox snapshot을 추가했다. 전체 합성 PostgreSQL/Mock HTTP 회귀 189건 통과(실패 0, 기존 dependency deprecation warning 2건). 다중 방 별도 outbox, route 충돌/버전 충돌, route 변경 전송 취소, route 없는 다중 방의 안전 정지와 일정 보존, Telegram `message_thread_id` 요청·응답 일치를 포함한다. 데모의 외부 네트워크 호출은 0건이다.
+- 실제 Redmi 설치, 실제 KakaoTalk N개 방 알림, 기존 WSL 운영 DB schema 6 적용, 실제 Telegram forum topic 수신은 아직 실행하지 않았다. 합성 테스트 통과를 이 항목들의 성공으로 해석하지 않는다.
+
 ## v1.0.0 / master 통합 — 2026-09-18 (최신)
 
 - 전용 합성 PostgreSQL `radar_integration_test`: **183 passed / 0 skipped / 0 failed**, 24.41초, 기존 deprecation 경고 2개. 운영 DB·실제 대화·유료 OpenAI 호출은 회귀 테스트에 사용하지 않았다.

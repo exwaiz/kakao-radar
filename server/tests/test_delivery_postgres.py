@@ -98,6 +98,62 @@ class StubChannel:
         return self.result
 
 
+def test_two_rooms_create_separate_route_snapshotted_outboxes(setup):
+    _, store, _, delivery, device, first_room, headers, _ = setup
+    second_room = uuid4()
+    store.provision(device, second_room, headers['Authorization'].removeprefix('Bearer '), 'fixture-second')
+    store.update_route(device, first_room, chat_id='-1001234567890', message_thread_id=101,
+                       display_name='fixture-first', enabled=True, expected_version=0)
+    store.update_route(device, second_room, chat_id='-1001234567890', message_thread_id=202,
+                       display_name='fixture-second', enabled=True, expected_version=0)
+    policy(setup)
+    due(setup)
+    summary(setup, title='fixture-first-topic', room=first_room)
+    summary(setup, title='fixture-second-topic', room=second_room)
+    planned = delivery.plan(device)
+    assert isinstance(planned, list) and len(planned) == 2
+    with store.connect() as db:
+        rows = db.execute("""SELECT delivery_id,room_id,destination_chat_id,message_thread_id,route_version,payload
+            FROM delivery_outbox WHERE delivery_id=ANY(%s) ORDER BY message_thread_id""", (planned,)).fetchall()
+    assert [(row['room_id'],row['message_thread_id']) for row in rows] == [(first_room,101),(second_room,202)]
+    assert all(row['destination_chat_id']=='-1001234567890' and row['route_version']==1 for row in rows)
+    assert all({topic['room_id'] for topic in row['payload']['topics']}=={str(row['room_id'])} for row in rows)
+    claim = delivery.begin_send(device)
+    assert (claim.destination_chat_id,claim.message_thread_id,claim.route_version) in {
+        ('-1001234567890',101,1),('-1001234567890',202,1)}
+    assert delivery.finish(claim,'failed','channel_rejected')
+
+
+def test_route_change_cancels_unsent_snapshot_before_publish(setup):
+    _, store, _, delivery, device, room, _, _ = setup
+    store.update_route(device, room, chat_id='-1001234567890', message_thread_id=101,
+                       display_name='fixture-room', enabled=True, expected_version=0)
+    policy(setup)
+    due(setup)
+    summary(setup, title='fixture-route-change')
+    identifier = delivery.plan(device)
+    assert identifier
+    updated = store.update_route(device, room, chat_id='-1001234567890', message_thread_id=202,
+                                 display_name='fixture-room', enabled=True, expected_version=1)
+    assert updated['version'] == 2
+    history = {item['delivery_id']:item for item in delivery.history(device)}
+    assert history[identifier]['status'] == 'cancelled'
+    assert history[identifier]['last_error'] == 'route_changed'
+    assert delivery.begin_send(device) is None
+
+
+def test_multiple_rooms_without_explicit_routes_do_not_consume_schedule(setup):
+    _, store, _, delivery, device, _, headers, _ = setup
+    second = uuid4()
+    store.provision(device, second, headers['Authorization'].removeprefix('Bearer '), 'fixture-second')
+    policy(setup)
+    due(setup)
+    summary(setup, title='fixture-unrouted')
+    before = delivery.policy(device)['next_due_at']
+    assert delivery.plan(device) is None
+    assert delivery.policy(device)['next_due_at'] == before
+
+
 def test_urgent_threshold_schedule_and_cooldown(setup):
     _, store, _, delivery, device, _, _, _ = setup
     policy(setup, urgent_enabled=True)
@@ -381,10 +437,15 @@ def test_content_dedup_preserves_corrections_and_distinct_rooms(setup):
     other_room = uuid4()
     with store.connect() as db:
         db.execute("INSERT INTO rooms(device_id,room_id) VALUES(%s,%s)",(device,other_room))
+    store.update_route(device,room,chat_id='-1001234567890',message_thread_id=101,
+                       display_name='fixture-first',enabled=True,expected_version=0)
+    store.update_route(device,other_room,chat_id='-1001234567890',message_thread_id=202,
+                       display_name='fixture-second',enabled=True,expected_version=0)
     summary(setup,room=other_room)
     due(setup)
     assert DeliveryWorker(delivery,StubChannel()).process(device) == "accepted"
-    assert delivery.history(device)[0]["topic_count"] == 2
+    assert DeliveryWorker(delivery,StubChannel()).process(device) == "accepted"
+    assert [item["topic_count"] for item in delivery.history(device)[:2]] == [1,1]
 
 
 def test_old_non_candidate_and_old_profile_summaries_are_excluded(setup):

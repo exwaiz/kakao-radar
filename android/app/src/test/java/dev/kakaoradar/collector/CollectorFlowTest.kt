@@ -14,6 +14,51 @@ import java.util.concurrent.TimeUnit
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = RadarApp::class)
 class CollectorFlowTest {
+    @Test fun legacySingleRoomPreferenceMigratesWithoutChangingRoomId() {
+        val context = RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("collector", android.content.Context.MODE_PRIVATE)
+        val roomId = java.util.UUID.randomUUID().toString()
+        val candidate = JSONObject().put("title", "legacy-room").put("key", "legacy-key")
+            .put("shortcut", "legacy-shortcut").put("tag", "")
+        prefs.edit().clear().putString("binding", candidate.toString()).putString("room_id", roomId)
+            .putLong("last_capture", 1234).commit()
+        val migrated = Config(context)
+        assertEquals(1, migrated.bindings.size)
+        assertEquals(roomId, migrated.bindings.single().roomId)
+        assertEquals("legacy-room", migrated.bindings.single().candidate.title)
+        assertEquals(1234, migrated.bindings.single().lastCapture)
+        assertFalse(prefs.contains("binding"))
+        assertFalse(prefs.contains("room_id"))
+        migrated.clear()
+    }
+
+    @Test fun twoSelectedRoomsKeepIndependentIdentityAndSnapshots() {
+        val app = RuntimeEnvironment.getApplication() as RadarApp
+        app.io.submit {
+            app.config.clear()
+            app.db.runInTransaction {
+                app.db.dao().clearQueue(); app.db.dao().clearMessages(); app.db.dao().clearSnapshots()
+            }
+            val first = RoomCandidate("fixture-one", "key-one", "shortcut-one")
+            val second = RoomCandidate("fixture-two", "key-two", "shortcut-two")
+            app.config.replaceSelected(listOf(first, second))
+            val bindings = app.config.bindings
+            assertEquals(2, bindings.size)
+            assertNotEquals(bindings[0].roomId, bindings[1].roomId)
+            app.config.enabled = true
+            val now = System.currentTimeMillis()
+            app.capture(ParsedNotification(first, listOf(ObservedMessage("sender-one", "message-one", now))), now)
+            app.capture(ParsedNotification(second, listOf(ObservedMessage("sender-two", "message-two", now + 1))), now + 1)
+            app.capture(ParsedNotification(RoomCandidate("other", "other", "other"),
+                listOf(ObservedMessage("sender", "must-not-save", now + 2))), now + 2)
+            val recent = app.db.dao().recent()
+            assertEquals(2, recent.size)
+            assertEquals(bindings.map { it.roomId }.toSet(), recent.map { it.roomId }.toSet())
+            assertTrue(bindings.all { app.db.dao().snapshot(it.roomId) != null })
+            assertTrue(app.db.dao().roomStatus().all { it.stored == 1 && it.pending == 1 })
+        }.get(30, TimeUnit.SECONDS)
+    }
+
     @Test fun capturePauseRoomFilteringAndExportAreConsistent() {
         val app = RuntimeEnvironment.getApplication() as RadarApp
         app.io.submit {

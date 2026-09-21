@@ -148,3 +148,45 @@ SELECT device_id,room_id,max(observed_at) FROM sources GROUP BY device_id,room_i
 ON CONFLICT(device_id,room_id) DO UPDATE SET observed_through=
  GREATEST(delivery_progress.observed_through,excluded.observed_through);
 INSERT INTO schema_versions(version) VALUES(5) ON CONFLICT DO NOTHING;
+
+-- V2.0: each Kakao room is an independent collection and Telegram routing unit.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+CREATE TABLE IF NOT EXISTS telegram_routes (
+ device_id UUID NOT NULL, room_id UUID NOT NULL, chat_id TEXT NOT NULL,
+ message_thread_id BIGINT, display_name TEXT NOT NULL DEFAULT '', enabled BOOLEAN NOT NULL DEFAULT TRUE,
+ version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(device_id,room_id),
+ FOREIGN KEY(device_id,room_id) REFERENCES rooms(device_id,room_id) ON DELETE CASCADE,
+ CHECK(chat_id ~ '^-?[0-9]{1,20}$'), CHECK(message_thread_id IS NULL OR message_thread_id > 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS telegram_route_destination
+ ON telegram_routes(device_id,chat_id,COALESCE(message_thread_id,0)) WHERE enabled;
+ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS room_id UUID;
+ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS destination_chat_id TEXT;
+ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS message_thread_id BIGINT;
+ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS route_version INTEGER;
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='delivery_outbox_room_fk') THEN
+  ALTER TABLE delivery_outbox ADD CONSTRAINT delivery_outbox_room_fk
+   FOREIGN KEY(device_id,room_id) REFERENCES rooms(device_id,room_id) ON DELETE CASCADE;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='delivery_outbox_destination_check') THEN
+  ALTER TABLE delivery_outbox ADD CONSTRAINT delivery_outbox_destination_check
+   CHECK(destination_chat_id IS NULL OR destination_chat_id ~ '^-?[0-9]{1,20}$');
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='delivery_outbox_thread_check') THEN
+  ALTER TABLE delivery_outbox ADD CONSTRAINT delivery_outbox_thread_check
+   CHECK(message_thread_id IS NULL OR message_thread_id > 0);
+ END IF;
+END $$;
+UPDATE delivery_outbox o SET room_id=single_room.room_id
+FROM (
+ SELECT delivery_id,(array_agg(room_id))[1] AS room_id FROM delivery_items
+ GROUP BY delivery_id HAVING count(DISTINCT room_id)=1
+) single_room WHERE o.delivery_id=single_room.delivery_id AND o.room_id IS NULL;
+DROP INDEX IF EXISTS delivery_one_active_device;
+CREATE UNIQUE INDEX IF NOT EXISTS delivery_one_active_room ON delivery_outbox(device_id,room_id)
+ WHERE room_id IS NOT NULL AND status IN ('pending','sending','retry_wait');
+CREATE INDEX IF NOT EXISTS delivery_room_created ON delivery_outbox(device_id,room_id,created_at);
+INSERT INTO schema_versions(version) VALUES(6) ON CONFLICT DO NOTHING;

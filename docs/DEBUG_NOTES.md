@@ -1,5 +1,12 @@
 # Kakao Radar — Real-device Debug Notes
 
+## 2026-09-21 — v2.0 다중 방 구현 검증 경계
+
+- Android 단일 방 preference를 동일 `room_id`의 다중 선택 집합으로 승격하는 코드, 방별 snapshot/capture 진도, 선택 방 round-robin 업로드를 구현했다.
+- 서버 schema 6에 방 표시명, Telegram route, outbox의 방·chat·thread·route version snapshot을 추가했다. 다중 방은 방별 outbox로만 계획한다.
+- 이 작업의 Robolectric/합성 PostgreSQL/Mock Telegram 결과는 실제 Redmi의 다중 방 알림 도착률, 재부팅·야간 지속성, 실제 Telegram forum topic 표시를 증명하지 않는다. 실제 APK 설치·실방 선택·WSL schema 적용·Telegram topic 수신은 별도 실기기 검증으로 남긴다.
+- 원문·닉네임·실제 Telegram token/chat ID는 테스트 fixture, 문서, 저장소에 추가하지 않았다.
+
 실기기에서 확인된 사실과 아직 검증되지 않은 가설을 분리해 기록한다. 채팅 원문은 이 문서에 저장하지 않는다.
 
 ## 2026-09-18 — 실제 Telegram 반복·시간 역행 수정

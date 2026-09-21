@@ -46,7 +46,7 @@ class MainActivity : Activity() {
         setContentView(scroll)
         root.addView(label("KAKAO RADAR   /   수집 검증", 12, Color.rgb(8, 127, 114)))
         root.addView(label("놓친 대화의 흐름을\n모으는 첫 단계", 28).apply { setTypeface(null, Typeface.BOLD) })
-        root.addView(label("0.3.1 · 알림 수집과 선택한 서버 동기화", 13))
+        root.addView(label("2.0.0 · 여러 방을 독립적으로 수집·동기화", 13))
 
         val overview = card(root)
         status = label("상태 확인 중", 18).also { overview.addView(it) }
@@ -67,7 +67,7 @@ class MainActivity : Activity() {
         toggle = button(setup, "수집 시작") {
             when {
                 app.config.enabled -> { app.config.enabled = false; refresh() }
-                app.config.binding == null -> toast("대상 방을 먼저 선택하세요")
+                app.config.bindings.isEmpty() -> toast("대상 방을 하나 이상 선택하세요")
                 !accessGranted() -> toast("알림 접근을 먼저 허용하세요")
                 else -> { app.config.enabled = true; toast("이제 도착하는 알림부터 수집합니다"); refresh() }
             }
@@ -158,12 +158,21 @@ class MainActivity : Activity() {
             config.enabled -> "● 수집 중"
             else -> "수집 일시 중지"
         }
-        room.text = "대상 방: ${config.binding?.title ?: "선택 전"}"
+        room.text = if (config.bindings.isEmpty()) "대상 방: 선택 전" else
+            "대상 방 ${config.bindings.size}개\n" + config.bindings.joinToString("\n") {
+                "• ${it.candidate.title} · ${it.roomId.take(8)} · 최근 ${time(it.lastCapture)}"
+            }
         toggle.text = if (config.enabled) "수집 중지" else "수집 시작"
         app.io.execute {
             try {
                 app.pruneIfDue()
                 val dao = app.db.dao()
+                val perRoom = dao.roomStatus().associateBy { it.roomId }
+                val roomSummary = if (config.bindings.isEmpty()) "대상 방: 선택 전" else
+                    "대상 방 ${config.bindings.size}개\n" + config.bindings.joinToString("\n") { binding ->
+                        val local = perRoom[binding.roomId]
+                        "• ${binding.candidate.title} · ${binding.roomId.take(8)} · 저장 ${local?.stored ?: 0} · 대기 ${local?.pending ?: 0} · 최근 ${time(binding.lastCapture)}"
+                    }
                 val reasons = dao.reasons().joinToString("\n") { entry ->
                     val name = entry.code.removePrefix("unsupported_").uppercase(Locale.ROOT)
                     val title = ParseReason.entries.firstOrNull { it.name == name }?.label ?: "기타"
@@ -183,7 +192,7 @@ class MainActivity : Activity() {
                 val recent = dao.recent().joinToString("\n\n") {
                     "${time(it.observedAt)} · ${it.sender.take(8)}${if (it.quality != "structured") " · 순서 확인 필요" else ""}\n${it.text.take(350)}"
                 }.ifEmpty { "아직 저장된 메시지가 없습니다. 방을 선택하고 수집을 시작해 주세요." }
-                runOnUiThread { if (!isDestroyed) { counts.text = summary; preview.text = recent }; loading = false }
+                runOnUiThread { if (!isDestroyed) { room.text = roomSummary; counts.text = summary; preview.text = recent }; loading = false }
             } catch (_: Exception) {
                 runOnUiThread { if (!isDestroyed) counts.text = "저장소를 읽지 못했습니다."; loading = false }
             }
@@ -202,20 +211,28 @@ class MainActivity : Activity() {
             "${index + 1}. ${c.title} · ${c.identityLabel}" +
                 if (app.config.hasTitleCollision(c)) " · 동일 제목 ${app.config.alias(c.shortcut.ifBlank { c.key }).take(6)}" else ""
         }.toTypedArray()
-        AlertDialog.Builder(this).setTitle("수집할 방 하나 선택").setItems(labels) { _, index ->
-            val choice = candidates[index]
-            AlertDialog.Builder(this).setTitle(choice.title)
-                .setMessage("이 알림에 연결된 방만 수집합니다. 대화 ID가 있으면 알림 키가 바뀌어도 같은 방으로 구분합니다. 같은 제목의 방은 목록의 구분값과 실제 알림을 확인하세요. 대화 ID가 없고 제목이 충돌하면 저장을 보류합니다.")
-                .setNegativeButton("취소", null).setPositiveButton("이 방 선택") { _, _ ->
-                    app.config.select(choice); refresh()
-                }.show()
-        }.show()
+        val selected = app.config.bindings
+        val checked = BooleanArray(candidates.size) { index ->
+            selected.any { it.candidate.matches(candidates[index]) }
+        }
+        AlertDialog.Builder(this).setTitle("수집할 방 선택")
+            .setMultiChoiceItems(labels, checked) { _, index, enabled -> checked[index] = enabled }
+            .setMessage("각 알림은 정확히 일치하는 선택 방 하나에만 저장합니다. 선택 변경 뒤에는 안전을 위해 수집을 일시 중지합니다.")
+            .setNegativeButton("취소", null)
+            .setPositiveButton("선택 저장") { _, _ ->
+                val before = app.config.selectionVersion
+                app.config.replaceSelected(candidates.filterIndexed { index, _ -> checked[index] })
+                if (app.config.selectionVersion != before) {
+                    toast("방 선택이 바뀌어 수집을 일시 중지했습니다. 확인 후 다시 시작하세요.")
+                }
+                refresh()
+            }.show()
     }
 
     private fun configureSync() {
-        if (app.config.binding == null) { toast("대상 방을 먼저 선택하세요"); return }
+        if (app.config.bindings.isEmpty()) { toast("대상 방을 하나 이상 선택하세요"); return }
         val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20),dp(10),dp(20),dp(10)) }
-        panel.addView(label("이 방의 연결 ID: ${app.config.roomId}\n서버의 허용 방에도 같은 ID를 등록하세요.",14))
+        panel.addView(label("방별 연결 ID:\n${app.config.bindings.joinToString("\n") { "${it.candidate.title}: ${it.roomId}" }}\n서버에도 각 ID를 허용 방으로 등록하세요.",14))
         val server = EditText(this).apply { hint="HTTPS 서버 주소"; setText(app.syncSettings.server); inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI; panel.addView(this) }
         val device = EditText(this).apply { hint="기기 ID (UUID)"; setText(app.syncSettings.device); panel.addView(this) }
         val token = EditText(this).apply { hint="기기 인증 토큰"; inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD; panel.addView(this) }
@@ -224,7 +241,7 @@ class MainActivity : Activity() {
             .setNegativeButton("취소",null).setPositiveButton("연결하고 동기화",null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val result=runCatching { app.syncSettings.configure(server.text.toString().trim(), device.text.toString().trim(), app.config.roomId, token.text.toString()) }
+                val result=runCatching { app.syncSettings.configure(server.text.toString().trim(), device.text.toString().trim(), token.text.toString()) }
                 if (result.isSuccess) { SyncScheduler.schedule(this); dialog.dismiss(); refresh(); toast("동기화를 시작합니다") }
                 else toast("HTTPS 주소·UUID 기기 ID·32자 이상 토큰을 확인해 주세요")
             }

@@ -13,7 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from starlette.concurrency import run_in_threadpool
 
-from .store import Store
+from .store import RouteDestinationConflict, RouteVersionConflict, Store
 from .analysis_models import ProfileUpdate
 from .analysis_store import AnalysisStore, VersionConflict
 from .delivery_channels import ChannelConfigurationError, DigestLinks, channel_readiness
@@ -58,13 +58,27 @@ class Message(BaseModel):
         return value
 
 
+class RoomUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class TelegramRouteUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_version: int = Field(ge=0)
+    chat_id: str = Field(pattern=r"^-?[0-9]{1,20}$")
+    message_thread_id: int | None = Field(default=None, gt=0)
+    display_name: str = Field(default="", max_length=120)
+    enabled: bool = True
+
+
 def create_app(dsn=None, digest_links=None):
     store = Store(dsn or os.environ["RADAR_DATABASE_URL"])
     @asynccontextmanager
     async def lifespan(app):
         store.migrate()
         yield
-    app = FastAPI(title="Kakao Radar",version="1.0.0",lifespan=lifespan)
+    app = FastAPI(title="Kakao Radar",version="2.0.0",lifespan=lifespan)
     app.state.store = store
     analysis = AnalysisStore(store)
     app.state.analysis = analysis
@@ -100,7 +114,7 @@ def create_app(dsn=None, digest_links=None):
 
     @app.get("/health")
     def health():
-        return {"status":"ok","version":"1.0.0"}
+        return {"status":"ok","version":"2.0.0"}
 
     @app.post("/v1/messages/batch")
     async def batch(request: Request, device=Depends(principal)):
@@ -137,6 +151,35 @@ def create_app(dsn=None, digest_links=None):
     @app.get("/v1/status")
     def status(device=Depends(principal)):
         return store.status(device)
+
+    @app.get("/v1/rooms")
+    def rooms(device=Depends(principal)):
+        return {"items": store.rooms(device)}
+
+    @app.put("/v1/rooms/{room_id}", openapi_extra={"requestBody":{"required":True,"content":{"application/json":{"schema":RoomUpdate.model_json_schema()}}}})
+    async def room_update(room_id: UUID, request: Request, device=Depends(principal)):
+        update = await bounded_model(request, RoomUpdate)
+        result = await run_in_threadpool(store.update_room, device, room_id, update.display_name)
+        if result is None:
+            raise HTTPException(404, "Room not found")
+        return result
+
+    @app.get("/v1/telegram/routes")
+    def telegram_routes(device=Depends(principal)):
+        return {"items": store.routes(device)}
+
+    @app.put("/v1/telegram/routes/{room_id}", openapi_extra={"requestBody":{"required":True,"content":{"application/json":{"schema":TelegramRouteUpdate.model_json_schema()}}}})
+    async def telegram_route_update(room_id: UUID, request: Request, device=Depends(principal)):
+        update = await bounded_model(request, TelegramRouteUpdate)
+        try:
+            result = await run_in_threadpool(store.update_route, device, room_id, **update.model_dump())
+        except RouteVersionConflict:
+            raise HTTPException(409, "Route version changed") from None
+        except RouteDestinationConflict:
+            raise HTTPException(409, "Telegram destination is already assigned") from None
+        if result is None:
+            raise HTTPException(404, "Room not found")
+        return result
 
     @app.get("/v1/latency")
     def latency(device=Depends(principal)):
@@ -220,7 +263,16 @@ def create_app(dsn=None, digest_links=None):
     @app.get("/v1/delivery/status")
     def delivery_status(device=Depends(principal)):
         channel = delivery.policy(device)["policy"]["channel"]
-        return {**delivery.status(device), "channel": channel, **channel_readiness(channel), "digest_links_configured": links.enabled}
+        rooms = store.rooms(device)
+        enabled_routes = [item for item in store.routes(device) if item["enabled"]]
+        routed_rooms = {item["room_id"] for item in enabled_routes}
+        routing = {"allowed_rooms": sum(1 for item in rooms if item["allowed"]),
+                   "routed_rooms": len(routed_rooms),
+                   "unrouted_room_ids": [str(item["room_id"]) for item in rooms
+                                         if item["allowed"] and item["room_id"] not in routed_rooms]}
+        return {**delivery.status(device), "channel": channel,
+                **channel_readiness(channel, routed=bool(enabled_routes)), "routing": routing,
+                "digest_links_configured": links.enabled}
 
     @app.get("/v1/delivery/preview")
     def delivery_preview(device=Depends(principal)):

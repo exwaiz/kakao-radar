@@ -1,5 +1,17 @@
 # Kakao Radar — Decision Log
 
+## D-018 — v2.0 다중 방 수집과 단일 Telegram 봇의 토픽 라우팅 (2026-09-21)
+
+- **상태: 확정, 구현 중.** 한 Android 기기는 명시적으로 선택한 N개 KakaoTalk 방을 각각 안정적인 `room_id`로 수집한다. 단일 방 설정은 기존 `room_id`를 유지한 채 선택 집합으로 자동 승격한다.
+- 알림 한 건은 선택 binding과 정확히 하나만 일치할 때 저장한다. 일치가 여러 개인 경우 원문을 저장하지 않고 `room_binding_ambiguous` 진단만 남긴다. `sbn.key`나 제목만을 영구 방 ID로 승격하지 않는다.
+- 동기화 자격 증명은 기기 단위다. 업로드 배치는 한 방의 메시지만 포함하며 선택 방을 round-robin으로 순회한다. 한 방의 큰 backlog가 다른 방의 전송을 계속 막지 않게 한다.
+- WSL은 방별 수신량·최근 수신·분석 backlog·전달 진도를 제공한다. 분석 job, 요약, source receipt, dedup 및 전달 진도는 `(device_id, room_id)` 경계를 유지한다.
+- 기기 bearer token은 임의의 새 `room_id`를 서버 allowlist에 추가할 권한이 없다. 새 방은 로컬 운영 CLI로 provision하고, 인증 API는 이미 허용된 방의 표시명과 Telegram route만 관리한다.
+- Telegram은 **봇 하나와 비공개 forum supergroup 하나를 공유하고 Kakao 방마다 `message_thread_id` 하나를 대응**시킨다. 기존 1:1 개인 채팅은 topic을 지원하지 않는다. route는 DB에서 버전 관리하며 outbox 생성 시 chat/thread/version을 snapshot한다. 전송 직전 route가 바뀌면 아직 보내지 않은 outbox를 취소한다.
+- 서로 다른 Kakao 방의 요약은 같은 outbox나 Telegram 메시지에 섞지 않는다. 전체 브리핑은 이 방별 전달이 안정화된 뒤 별도 산출물로만 추가할 수 있다.
+- route가 없는 기존 단일 방 설치는 환경 변수의 기존 Telegram chat을 계속 사용할 수 있다. 허용 방이 둘 이상이면 모든 방에 명시 route가 있기 전 자동 fallback 전달을 하지 않는다.
+- D-016의 accepted/uncertain 진도 소비, 원문 ID·내용 hash receipt, 과거 후보 미이월, literal 인용 계약은 그대로 보존한다.
+
 이 문서는 프로젝트에서 이미 합의했거나 실기기 결과로 확정된 결정을 기록한다. 새 Codex 세션은 장문의 과거 대화보다 이 문서와 `AGENTS.md`를 우선한다.
 
 ## D-016 — 전달 진도·원문 중복·Telegram 서식 개선 (2026-09-18)

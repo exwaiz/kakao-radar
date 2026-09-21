@@ -1,6 +1,8 @@
-# 카톡 레이더 v1.0.0
+# 카톡 레이더 v2.0.0
 
-Redmi Note 14 5G / Android 15의 KakaoTalk 알림 수집, HTTPS 동기화, 관심사 분석과 Telegram 요약 전달을 통합한 개인용 서비스다. Android와 서버 버전은 1.0.0이며 통합 브랜치는 master다.
+Redmi Note 14 5G / Android 15에서 여러 KakaoTalk 방의 알림을 독립적으로 수집하고, HTTPS 동기화·관심사 분석을 거쳐 한 Telegram 봇의 방별 토픽으로 전달하는 개인용 서비스다. Android와 서버 버전은 2.0.0이며 다중 방 구현은 `feat/v2-multi-room`에서 검증 중이다.
+
+다중 방 전환과 Telegram forum 준비는 [2.0 전환 절차](docs/V2_MULTI_ROOM_RUNBOOK.md)를 따른다. 기존 봇과의 1:1 개인 채팅은 `message_thread_id`를 지원하지 않으므로 N개 방을 토픽으로 나누려면 비공개 supergroup의 Topics 기능이 필요하다.
 
 **2026-09-18 테스트:** 한국 시간 매시 정각 1시간 간격, 최대 3개 관심 주제와 실제 원문 인용을 전달한다. 새 후보가 없으면 보내지 않는다. 9/19 자정에 기존 23:00 / 하루 1회 / 최대 5개 주제로 자동 복귀한다. 오늘 이미 사용한 발송 횟수를 보존하기 위해 기존 테스트 quota 144회는 유지하며, AI 예산은 하루 $1다.
 
@@ -8,7 +10,7 @@ Redmi Note 14 5G / Android 15의 KakaoTalk 알림 수집, HTTPS 동기화, 관�
 
 실제 선택 방 업로드, OpenAI 분석 및 사용자 보고를 통한 Telegram 수신을 확인했다. 수집률·재부팅/야간 지속성·사용자 50주제 품질 평가·본폰 표시 지연 실측은 별도로 남는다. 현재 WSL과 노트북을 실행하고 USB reverse를 유지해야 한다.
 
-[WSL 운영 안내](docs/WSL_RUNTIME.md) · [릴리스 범위](docs/RELEASE_1_0.md) · [검증 기록](docs/VALIDATION.md) · [M3 분석](docs/M3_ANALYSIS.md) · [M5 지연 측정](docs/M5_LATENCY.md)
+[2.0 릴리스 범위](docs/RELEASE_2_0.md) · [2.0 전환 절차](docs/V2_MULTI_ROOM_RUNBOOK.md) · [WSL 운영 안내](docs/WSL_RUNTIME.md) · [검증 기록](docs/VALIDATION.md) · [M3 분석](docs/M3_ANALYSIS.md) · [M5 지연 측정](docs/M5_LATENCY.md)
 
 ## 구현한 기능
 
@@ -31,7 +33,7 @@ Redmi Note 14 5G / Android 15의 KakaoTalk 알림 수집, HTTPS 동기화, 관�
 
 ## 설치와 첫 실행
 
-1. 제공된 `kakao-radar-1.0.0-debug.apk`를 서브폰으로 옮겨 설치한다. 개인 테스트용 debug 서명 APK다.
+1. 제공된 `kakao-radar-2.0.0-debug.apk`를 서브폰으로 옮겨 설치한다. 개인 테스트용 debug 서명 APK다.
 2. 앱에서 **알림 접근 설정 열기**를 눌러 ‘카톡 레이더’의 접근을 허용한다.
 3. 대상 카톡방의 알림을 켜고 새 메시지를 기다린다. 소리·진동은 별도로 꺼도 되지만 실제 수집 여부는 확인해야 한다.
 4. 앱의 **발견한 방에서 선택**에서 대상 방을 확인하고 **수집 시작**을 누른다.

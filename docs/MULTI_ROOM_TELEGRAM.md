@@ -1,6 +1,8 @@
 # 다중 KakaoTalk 방 수집과 Telegram 토픽 라우팅 설계안
 
-- 상태: **구현 전 설계 확정**
+> 2026-09-21 구현 진행: Android 다중 binding/방별 공정 업로드, 서버 schema 6 방별 상태·route, 방별 outbox와 Telegram `message_thread_id` 전달까지 코드에 반영했다. 합성 테스트와 실제 Redmi/WSL/Telegram 운영 검증은 구분한다.
+
+- 상태: **설계 확정 · 구현 검증 중**
 - 작성일: 2026-09-19
 - 기준선: GitHub `master` / v1.0.0 이후
 - 목적: Xiaomi 수집 APK 한 대에서 사용자가 명시적으로 선택한 N개의 KakaoTalk 방을 독립적으로 수집하고, WSL에서 방별로 저장·분석·진도를 관리한 뒤 하나의 Telegram 봇 대화 안에서 방별 토픽으로 전달한다.
@@ -17,7 +19,7 @@ KakaoTalk 방 C -> room_id C -> 저장/분석/진도 C -> Telegram 토픽 C
 ```
 
 - Telegram 봇 토큰은 하나만 운영한다.
-- 기본 대상은 기존 본인 개인 채팅 하나다.
+- 기본 대상은 본인만 접근하는 비공개 forum supergroup 하나다. 기존 봇 1:1 개인 채팅은 topic을 지원하지 않아 단일 방 호환 fallback으로만 사용한다.
 - KakaoTalk 방마다 별도의 Telegram `message_thread_id`를 매핑한다.
 - 필요할 때만 여러 방의 중요 항목을 모은 선택적 `전체 브리핑` 토픽을 둔다.
 - 방별 수신자·관리자·보안 경계가 실제로 달라질 때만 별도 봇 또는 별도 Telegram 채팅을 검토한다.
@@ -95,7 +97,7 @@ TelegramRoute {
 
 서버 스키마 후보:
 
-- `rooms`: `display_name`, `enabled`, `updated_at`
+- `rooms`: 기존 운영 allowlist인 `allowed`를 유지하고 `display_name`, `updated_at`을 추가한다. 기기 API가 임의 방을 self-provision하지 않는다.
 - `telegram_routes`: device/room별 chat/thread 라우트와 version
 - `delivery_outbox`: `room_id`, `destination_chat_id`, `message_thread_id`, `route_version`
 
@@ -103,9 +105,9 @@ TelegramRoute {
 
 - `GET /v1/rooms`
 - `PUT /v1/rooms/{room_id}`
-- `GET /v1/delivery/routes`
-- `PUT /v1/delivery/routes`
-- `GET /v1/status/rooms`
+- `GET /v1/telegram/routes`
+- `PUT /v1/telegram/routes/{room_id}`
+- `GET /v1/status`의 `rooms` 필드와 `GET /v1/delivery/status`의 `routing` 필드
 
 쓰기 API는 기존 기기 인증과 optimistic version 검사를 유지한다. 같은 room의 중복 라우트나 존재하지 않거나 비활성인 room 라우트는 거부한다.
 

@@ -139,11 +139,13 @@ class NtfyChannel:
             return ChannelResult("uncertain", "response_lost")
 
 
-def channel_readiness(provider="ntfy"):
+def channel_readiness(provider="ntfy", routed=False):
     try:
         if provider == "telegram":
             from .telegram_channel import TelegramChannel
             channel = TelegramChannel.from_env()
+            if channel.chat_id is None and not routed:
+                raise ChannelConfigurationError("A default chat or an enabled room route is required")
         else:
             channel = NtfyChannel.from_env()
         return {"configured": True, "digest_links_configured": channel.links.enabled}

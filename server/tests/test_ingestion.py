@@ -106,10 +106,14 @@ def test_delete_revokes_room_and_queued_retries_cannot_restore(setup):
     client,store,device,room,headers=setup
     item=message(room)
     send(client,headers,[item])
+    route={"expected_version":0,"chat_id":"-1001234567890","message_thread_id":101,
+           "display_name":"fixture-room","enabled":True}
+    assert client.put(f"/v1/telegram/routes/{room}",headers=headers,json=route).status_code==200
     result=client.delete(f"/v1/rooms/{room}/data",headers=headers)
     assert result.json()["deleted_events"]==1
     assert send(client,headers,[item])[0]["reason"]=="room_not_allowed"
     assert store.status(device)["stored_messages"]==0
+    assert client.get("/v1/telegram/routes",headers=headers).json()["items"]==[]
 
 
 def test_expired_messages_are_not_resurrected(setup):
@@ -154,3 +158,32 @@ def test_other_device_status_and_deletion_are_scoped(setup):
         with store.connect() as db:
             db.execute("DELETE FROM rooms WHERE device_id=%s",(other,))
             db.execute("DELETE FROM devices WHERE device_id=%s",(other,))
+
+
+def test_multiple_rooms_expose_independent_status_and_versioned_routes(setup):
+    client,store,device,room,headers=setup
+    second=uuid4()
+    token=headers["Authorization"].removeprefix("Bearer ")
+    store.provision(device,second,token,"fixture-second")
+    first_update=client.put(f"/v1/rooms/{room}",headers=headers,json={"display_name":"fixture-first"})
+    assert first_update.status_code==200
+    send(client,headers,[message(room),message(second),message(second)])
+    status=client.get("/v1/status",headers=headers).json()
+    per_room={item["room_id"]:item for item in status["rooms"]}
+    assert per_room[str(room)]["stored_messages"]==1
+    assert per_room[str(second)]["stored_messages"]==2
+
+    route={"expected_version":0,"chat_id":"-1001234567890","message_thread_id":101,
+           "display_name":"fixture-first","enabled":True}
+    created=client.put(f"/v1/telegram/routes/{room}",headers=headers,json=route)
+    assert created.status_code==200 and created.json()["version"]==1
+    stale=client.put(f"/v1/telegram/routes/{room}",headers=headers,json=route)
+    assert stale.status_code==409
+    duplicate=client.put(f"/v1/telegram/routes/{second}",headers=headers,json=route)
+    assert duplicate.status_code==409
+    second_route={**route,"chat_id":"-1001234567890","message_thread_id":202,
+                  "display_name":"fixture-second"}
+    assert client.put(f"/v1/telegram/routes/{second}",headers=headers,json=second_route).status_code==200
+    routes=client.get("/v1/telegram/routes",headers=headers).json()["items"]
+    assert {(item["room_id"],item["message_thread_id"]) for item in routes}=={
+        (str(room),101),(str(second),202)}

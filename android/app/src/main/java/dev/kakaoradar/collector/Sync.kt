@@ -23,7 +23,7 @@ import javax.net.ssl.TrustManagerFactory
 import java.security.cert.CertificateFactory
 import android.content.pm.ApplicationInfo
 
-data class SyncTarget(val server: String, val device: String, val room: String, val token: String, val generation: String, val localCa: String = "")
+data class SyncTarget(val server: String, val device: String, val token: String, val generation: String, val localCa: String = "")
 
 class SyncSettings(private val context: Context, private val preferenceName: String = "sync", private val keyAlias: String = "radar-sync-token") {
     private val prefs = context.getSharedPreferences(preferenceName, Context.MODE_PRIVATE)
@@ -38,11 +38,13 @@ class SyncSettings(private val context: Context, private val preferenceName: Str
         set(value) { prefs.edit().putString("error", value).apply() }
     val server get() = prefs.getString("server", "").orEmpty()
     val device get() = prefs.getString("device", "").orEmpty()
-    val room get() = prefs.getString("room", "").orEmpty()
-    fun configure(server: String, device: String, room: String, token: String, localCa: String = "") {
+    var roomCursor: Int
+        get() = prefs.getInt("room_cursor", 0)
+        set(value) { prefs.edit().putInt("room_cursor", value).apply() }
+    fun configure(server: String, device: String, token: String, localCa: String = "") {
         val url = URL(server)
         require(url.protocol == "https" && url.host.isNotBlank() && url.userInfo == null && url.query == null && url.ref == null && url.path in listOf("", "/"))
-        UUID.fromString(device); UUID.fromString(room)
+        UUID.fromString(device)
         require(token.length in 32..512 && token.all { it.code in 33..126 })
         if (localCa.isNotBlank()) {
             require(context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
@@ -51,7 +53,7 @@ class SyncSettings(private val context: Context, private val preferenceName: Str
         }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, secretKey()) }
         val encrypted = Base64.encodeToString(cipher.iv + cipher.doFinal(token.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
-        prefs.edit().putString("server", server.trimEnd('/')).putString("device", device).putString("room", room)
+        prefs.edit().putString("server", server.trimEnd('/')).putString("device", device).remove("room")
             .putString("token_encrypted", encrypted).putString("local_ca", localCa).putBoolean("enabled", true)
             .putString("generation", UUID.randomUUID().toString()).putString("error", "").commit()
     }
@@ -71,7 +73,7 @@ class SyncSettings(private val context: Context, private val preferenceName: Str
             init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
         }
         val token = String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8)
-        return SyncTarget(server, device, room, token, prefs.getString("generation", "").orEmpty(), prefs.getString("local_ca", "").orEmpty())
+        return SyncTarget(server, device, token, prefs.getString("generation", "").orEmpty(), prefs.getString("local_ca", "").orEmpty())
     }
     fun current(target: SyncTarget) = enabled && prefs.getString("generation", "") == target.generation
     fun clear() { prefs.edit().clear().commit() }
@@ -120,11 +122,11 @@ class HttpsUploadTransport(private val socketFactory: SSLSocketFactory? = null) 
 
 enum class SyncOutcome { IDLE, SENT, RETRY, AUTH_REQUIRED, PROTOCOL_ERROR, CANCELLED }
 class SyncEngine(private val db: RadarDatabase, private val transport: UploadTransport) {
-    fun sync(target: SyncTarget, isCurrent: () -> Boolean = { true }): SyncOutcome {
+    fun sync(target: SyncTarget, roomId: String, isCurrent: () -> Boolean = { true }): SyncOutcome {
         if (!isCurrent()) return SyncOutcome.CANCELLED
         val items = mutableListOf<SavedMessage>()
         var size = 20
-        for (message in db.dao().pending(target.room)) {
+        for (message in db.dao().pending(roomId)) {
             val bytes = wire(message).toString().toByteArray(Charsets.UTF_8).size + 1
             if (bytes > 900000) {
                 db.runInTransaction {
@@ -184,14 +186,26 @@ class UploadWorker(context: Context, params: WorkerParameters) : Worker(context,
                 app.syncSettings.error = "인증 정보를 다시 설정해 주세요"
                 return@synchronized Result.failure()
             } ?: return@synchronized Result.success()
-            if (target.room != app.config.roomId || app.config.binding == null) return@synchronized Result.success()
+            val selected = app.config.bindings.map { it.roomId }
+            if (selected.isEmpty()) return@synchronized Result.success()
+            val selectionVersion = app.config.selectionVersion
             val engine = SyncEngine(app.db, HttpsUploadTransport())
+            var cursor = app.syncSettings.roomCursor.mod(selected.size)
+            var idleRooms = 0
             for (batch in 0 until 10) {
                 if (isStopped) return@synchronized Result.retry()
-                val outcome = engine.sync(target) { app.syncSettings.current(target) && app.config.roomId == target.room }
+                val roomId = selected[cursor]
+                val outcome = engine.sync(target, roomId) {
+                    app.syncSettings.current(target) && app.config.selectionVersion == selectionVersion &&
+                        app.config.bindings.any { it.roomId == roomId }
+                }
                 when (outcome) {
-                    SyncOutcome.IDLE, SyncOutcome.CANCELLED -> return@synchronized Result.success()
-                    SyncOutcome.SENT -> { app.syncSettings.lastSync = System.currentTimeMillis(); app.syncSettings.error = "" }
+                    SyncOutcome.CANCELLED -> return@synchronized Result.success()
+                    SyncOutcome.IDLE -> idleRooms++
+                    SyncOutcome.SENT -> {
+                        idleRooms = 0
+                        app.syncSettings.lastSync = System.currentTimeMillis(); app.syncSettings.error = ""
+                    }
                     SyncOutcome.RETRY -> {
                         app.syncSettings.error = "연결 실패 · 대기열을 유지하고 재시도합니다"
                         return@synchronized Result.retry()
@@ -205,6 +219,9 @@ class UploadWorker(context: Context, params: WorkerParameters) : Worker(context,
                         return@synchronized Result.failure()
                     }
                 }
+                cursor = (cursor + 1).mod(selected.size)
+                app.syncSettings.roomCursor = cursor
+                if (idleRooms >= selected.size) return@synchronized Result.success()
             }
             // Continue a large backlog under the same persistent WorkManager request.
             Result.retry()
