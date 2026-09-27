@@ -1,5 +1,11 @@
 # Kakao Radar — Real-device Debug Notes
 
+## 2026-09-28 — 하루 4회 Telegram 테스트 일정
+
+- 사용자 요청으로 테스트 기간의 정기 발송 시각을 `Asia/Seoul` 11:00, 15:00, 20:00, 23:00으로 변경했다. 종료일은 지정되지 않아 사용자가 다시 변경할 때까지 유지한다.
+- 한 슬롯에서 선택된 4개 room이 각각 독립 말풍선을 만들 수 있으므로 일일 Telegram notification 상한을 4에서 16으로 조정했다. room당 최대 관심주제 5개, 원문 인용·중복 억제·AI 일일 $1 상한, 긴급 발송 OFF는 유지한다.
+- 변경 직후 정책 version은 7, 다음 due는 2026-09-28 11:00 KST다. 설정 변경 당시 active pending/retry outbox는 없었다.
+
 ## 2026-09-27 — 기존 봇 개인 chat에 4개 방별 말풍선 운영
 
 - 사용자 최신 요구로 forum/supergroup 없이 기존 Telegram 봇 하나와 기존 본인 개인 chat 하나를 공유한다. 단위시간마다 각 room의 관심 후보 전체를 요약한 말풍선 한 건을 만들며, 새 후보가 있는 room N개면 최대 N개를 보낸다.
