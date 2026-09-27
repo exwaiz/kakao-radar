@@ -1,5 +1,7 @@
 # 다중 KakaoTalk 방 수집과 Telegram 토픽 라우팅 설계안
 
+> 2026-09-27 운영 변경: D-019가 아래 forum 기본안을 대체한다. 현재 운영은 기존 봇 하나와 기존 개인 chat 하나를 공유하되, 각 Kakao room을 별도 outbox·별도 라벨 말풍선으로 보낸다. 방이 N개이면 한 주기 최대 N개 말풍선이다. forum topic은 선택적 대안이다.
+
 > 2026-09-21 구현 진행: Android 다중 binding/방별 공정 업로드, 서버 schema 6 방별 상태·route, 방별 outbox와 Telegram `message_thread_id` 전달까지 코드에 반영했다. 합성 테스트와 실제 Redmi/WSL/Telegram 운영 검증은 구분한다.
 
 - 상태: **설계 확정 · 구현 검증 중**

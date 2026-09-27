@@ -15,6 +15,10 @@ class DeviceDiagnosticsTest {
         val app = instrumentation.targetContext.applicationContext as RadarApp
         val report = app.io.submit<String> {
             val dao = app.db.dao()
+            val collectorPrefs = app.getSharedPreferences("collector", android.content.Context.MODE_PRIVATE)
+            val syncPrefs = app.getSharedPreferences("sync", android.content.Context.MODE_PRIVATE)
+            val bindings = app.config.bindings
+            val legacySyncRoom = syncPrefs.getString("room", "").orEmpty()
             val totals = JSONObject()
             listOf("unsupported_kakao_callbacks", "kakao_callbacks", "parsed_callbacks", "discovery_snapshots",
                 "parsed_snapshots", "selected_callbacks", "saved_messages", "suppressed_entries",
@@ -38,7 +42,15 @@ class DeviceDiagnosticsTest {
             JSONObject().put("schema_version", version).put("messages", dao.count())
                 .put("candidate_count", app.config.candidates().size)
                 .put("distinct_chat_ids",app.config.candidates().filter { it.shortcut.isNotBlank() }.map { it.shortcut }.distinct().size)
-                .put("room_selected", app.config.binding != null).put("capture_enabled", app.config.enabled)
+                .put("room_selected", app.config.binding != null)
+                .put("selected_room_count", bindings.size)
+                .put("selection_version", app.config.selectionVersion)
+                .put("legacy_binding_key_present", collectorPrefs.contains("binding"))
+                .put("legacy_room_id_key_present", collectorPrefs.contains("room_id"))
+                .put("all_room_ids_valid", bindings.all { runCatching { java.util.UUID.fromString(it.roomId) }.isSuccess })
+                .put("legacy_sync_room_matches_single_binding",
+                    legacySyncRoom.isNotBlank() && bindings.size == 1 && bindings.single().roomId == legacySyncRoom)
+                .put("capture_enabled", app.config.enabled)
                 .put("upload_pending",dao.queueCount("pending")).put("upload_sent",dao.queueCount("sent"))
                 .put("sync_enabled",app.syncSettings.enabled)
                 .put("diagnostics", totals).put("recent_structures", structures).toString()

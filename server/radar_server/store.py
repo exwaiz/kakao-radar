@@ -140,9 +140,11 @@ class Store:
             version = current["version"] if current else 0
             if version != expected_version:
                 raise RouteVersionConflict()
-            duplicate = db.execute("""SELECT room_id FROM telegram_routes WHERE device_id=%s AND chat_id=%s
-                AND COALESCE(message_thread_id,0)=COALESCE(%s,0) AND enabled AND room_id<>%s""",
-                (device, chat_id, message_thread_id, room)).fetchone()
+            duplicate = None
+            if message_thread_id is not None:
+                duplicate = db.execute("""SELECT room_id FROM telegram_routes WHERE device_id=%s AND chat_id=%s
+                    AND message_thread_id=%s AND enabled AND room_id<>%s""",
+                    (device, chat_id, message_thread_id, room)).fetchone()
             if enabled and duplicate:
                 raise RouteDestinationConflict()
             try:

@@ -160,8 +160,12 @@ CREATE TABLE IF NOT EXISTS telegram_routes (
  FOREIGN KEY(device_id,room_id) REFERENCES rooms(device_id,room_id) ON DELETE CASCADE,
  CHECK(chat_id ~ '^-?[0-9]{1,20}$'), CHECK(message_thread_id IS NULL OR message_thread_id > 0)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS telegram_route_destination
- ON telegram_routes(device_id,chat_id,COALESCE(message_thread_id,0)) WHERE enabled;
+-- Several Kakao rooms may share one ordinary private Telegram chat. Forum topics,
+-- when used, remain exclusive to one room so a topic never mixes room scopes.
+DROP INDEX IF EXISTS telegram_route_destination;
+CREATE UNIQUE INDEX IF NOT EXISTS telegram_route_forum_destination
+ ON telegram_routes(device_id,chat_id,message_thread_id)
+ WHERE enabled AND message_thread_id IS NOT NULL;
 ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS room_id UUID;
 ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS destination_chat_id TEXT;
 ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS message_thread_id BIGINT;
@@ -190,3 +194,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS delivery_one_active_room ON delivery_outbox(de
  WHERE room_id IS NOT NULL AND status IN ('pending','sending','retry_wait');
 CREATE INDEX IF NOT EXISTS delivery_room_created ON delivery_outbox(device_id,room_id,created_at);
 INSERT INTO schema_versions(version) VALUES(6) ON CONFLICT DO NOTHING;
+
+-- V2.1: one bot/private chat may receive one independently scoped bubble per room.
+INSERT INTO schema_versions(version) VALUES(7) ON CONFLICT DO NOTHING;

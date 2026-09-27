@@ -13,12 +13,14 @@ import sys
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--postgres-bin", required=True, type=Path)
+    parser.add_argument("--state-dir", type=Path,
+                        help="Test cluster directory; use a WSL ext4 path instead of /mnt/c")
     parser.add_argument("--port", type=int, default=55330)
     parser.add_argument("--serve", action="store_true", help="Keep the synthetic phone digest open for local UI verification")
     parser.add_argument("--server-port", type=int, default=8004)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    state = root / ".state" / "m4-test-postgres"
+    state = args.state_dir.resolve() if args.state_dir else root / ".state" / "m4-test-postgres"
     state.mkdir(parents=True, exist_ok=True)
     data = state / "data"
     suffix = ".exe" if os.name == "nt" else ""
@@ -35,7 +37,12 @@ def main():
         pg("initdb", "-D", data, "-U", "radar_test", "--auth=trust", "--encoding=UTF8", "--locale=C")
     started = False
     try:
-        pg("pg_ctl", "-D", data, "-l", state / "postgres.log", "-o", f"-h 127.0.0.1 -p {args.port}", "-w", "start")
+        server_options = f"-h 127.0.0.1 -p {args.port}"
+        if os.name != "nt":
+            # An unprivileged test account may not be allowed to create sockets
+            # in the distribution-wide /var/run/postgresql directory.
+            server_options += f" -k {state}"
+        pg("pg_ctl", "-D", data, "-l", state / "postgres.log", "-o", server_options, "-w", "start")
         started = True
         import psycopg
         with psycopg.connect(f"postgresql://radar_test@127.0.0.1:{args.port}/postgres", autocommit=True) as db:

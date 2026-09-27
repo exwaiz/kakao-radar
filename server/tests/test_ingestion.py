@@ -187,3 +187,18 @@ def test_multiple_rooms_expose_independent_status_and_versioned_routes(setup):
     routes=client.get("/v1/telegram/routes",headers=headers).json()["items"]
     assert {(item["room_id"],item["message_thread_id"]) for item in routes}=={
         (str(room),101),(str(second),202)}
+
+
+def test_multiple_rooms_may_share_one_private_telegram_chat(setup):
+    client,store,device,room,headers=setup
+    second=uuid4()
+    store.provision(device,second,headers["Authorization"].removeprefix("Bearer "),"fixture-second")
+    first={"expected_version":0,"chat_id":"123456789","message_thread_id":None,
+           "display_name":"Kakao room A","enabled":True}
+    second_route={**first,"display_name":"Kakao room B"}
+    assert client.put(f"/v1/telegram/routes/{room}",headers=headers,json=first).status_code==200
+    assert client.put(f"/v1/telegram/routes/{second}",headers=headers,json=second_route).status_code==200
+    routes=client.get("/v1/telegram/routes",headers=headers).json()["items"]
+    assert len(routes)==2
+    assert {item["chat_id"] for item in routes}=={"123456789"}
+    assert {item["message_thread_id"] for item in routes}=={None}

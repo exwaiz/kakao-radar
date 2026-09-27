@@ -124,6 +124,34 @@ def test_two_rooms_create_separate_route_snapshotted_outboxes(setup):
     assert delivery.finish(claim,'failed','channel_rejected')
 
 
+def test_two_rooms_share_private_chat_but_create_separate_labeled_bubbles(setup):
+    _, store, _, delivery, device, first_room, headers, _ = setup
+    second_room = uuid4()
+    store.provision(device, second_room, headers['Authorization'].removeprefix('Bearer '), 'Kakao room B')
+    store.update_room(device, first_room, 'Kakao room A')
+    store.update_route(device, first_room, chat_id='123456789', message_thread_id=None,
+                       display_name='Kakao room A', enabled=True, expected_version=0)
+    store.update_route(device, second_room, chat_id='123456789', message_thread_id=None,
+                       display_name='Kakao room B', enabled=True, expected_version=0)
+    policy(setup)
+    due(setup)
+    summary(setup, title='fixture-first-topic', room=first_room)
+    summary(setup, title='fixture-second-topic', room=second_room)
+    planned = delivery.plan(device)
+    assert isinstance(planned, list) and len(planned) == 2
+    with store.connect() as db:
+        rows = db.execute("""SELECT room_id,destination_chat_id,message_thread_id,payload
+            FROM delivery_outbox WHERE delivery_id=ANY(%s)""", (planned,)).fetchall()
+    by_room = {row['room_id']: row for row in rows}
+    assert set(by_room) == {first_room, second_room}
+    assert all(row['destination_chat_id'] == '123456789' for row in rows)
+    assert all(row['message_thread_id'] is None for row in rows)
+    assert by_room[first_room]['payload']['title'].startswith('Kakao room A · ')
+    assert by_room[second_room]['payload']['title'].startswith('Kakao room B · ')
+    assert all({topic['room_id'] for topic in row['payload']['topics']} == {str(row['room_id'])}
+               for row in rows)
+
+
 def test_route_change_cancels_unsent_snapshot_before_publish(setup):
     _, store, _, delivery, device, room, _, _ = setup
     store.update_route(device, room, chat_id='-1001234567890', message_thread_id=101,

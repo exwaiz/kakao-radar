@@ -139,16 +139,18 @@ class DeliveryStore:
 
     @staticmethod
     def _routes(db, device):
-        routes = db.execute("""SELECT tr.room_id,tr.chat_id,tr.message_thread_id,tr.version
+        routes = db.execute("""SELECT tr.room_id,tr.chat_id,tr.message_thread_id,tr.version,
+            COALESCE(NULLIF(tr.display_name,''),NULLIF(r.display_name,''),'Kakao room') AS display_name
             FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
             WHERE tr.device_id=%s AND tr.enabled AND r.allowed ORDER BY tr.room_id""", (device,)).fetchall()
         if routes:
             return routes
         if db.execute("SELECT 1 FROM telegram_routes WHERE device_id=%s LIMIT 1", (device,)).fetchone():
             return []
-        rooms = db.execute("SELECT room_id FROM rooms WHERE device_id=%s AND allowed ORDER BY room_id", (device,)).fetchall()
+        rooms = db.execute("SELECT room_id,display_name FROM rooms WHERE device_id=%s AND allowed ORDER BY room_id", (device,)).fetchall()
         # Lossless v1 migration: the sole room may continue using the environment chat.
-        return [{"room_id": rooms[0]["room_id"], "chat_id": None, "message_thread_id": None, "version": 0}] if len(rooms) == 1 else []
+        return [{"room_id": rooms[0]["room_id"], "chat_id": None, "message_thread_id": None,
+                 "version": 0, "display_name": rooms[0]["display_name"]}] if len(rooms) == 1 else []
 
     @classmethod
     def _route_current(cls, db, device, row):
@@ -206,6 +208,9 @@ class DeliveryStore:
                     continue
                 delivery = uuid4()
                 payload = render_digest(topics, delivery)
+                label = route["display_name"].strip()
+                if label:
+                    payload["title"] = f"{label} · {payload['title']}"
                 payload['source_windows']={topic['room_id']:topic['window_through'] for topic in topics}
                 db.execute("""INSERT INTO delivery_outbox(delivery_id,device_id,room_id,settings_version,profile_version,
                     destination_chat_id,message_thread_id,route_version,status,payload,slot_at,not_before,kind)

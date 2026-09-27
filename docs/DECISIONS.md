@@ -190,3 +190,12 @@
 - 9/19 자정에 23:00 / 하루 1회 / 최대 5개 주제로 복귀한다. 테스트 기간을 연장하거나 매일 재활성화하지 않는다.
 - 기존 main / M2 / M3 / M4 / WSL 기능과 기기 진단 기록을 master로 통합하고 Android versionCode 5 / versionName 1.0.0, 서버 1.0.0, VERSION 1.0.0을 표시한다.
 - v1.0.0은 사용자가 정한 개인용 통합 릴리스다. 실제 단말 업데이트, 장기 수집률, 재부팅·야간 지속성, 사용자 50주제 품질 평가, 본폰 표시 지연 실측과 외부 상세 링크 공개는 별도다. 새로운 외부 메시지나 AI 시험 호출로 릴리스 검증을 대신하지 않는다.
+## D-019 — 기존 Telegram 봇·개인 chat 공유, 방별 단일 말풍선 (2026-09-27)
+
+- **상태: 확정·운영 반영.** D-018의 기본 forum topic 방식을 사용자 최신 요구로 변경한다. 기존 Telegram 봇 하나와 기존 본인 1:1 chat 하나를 계속 사용한다.
+- 단위시간마다 Kakao room별 후보만 모아 room당 digest/outbox/Telegram 메시지 한 건을 만든다. 방이 N개이고 각 방에 새 후보가 있으면 한 주기 최대 N개의 독립 말풍선을 같은 봇 chat으로 보낸다.
+- 서로 다른 room의 원문·분석 job·summary·outbox·dedup·delivery progress를 섞지 않는다. 각 말풍선 제목에 route display name을 붙여 방을 구분한다.
+- `message_thread_id IS NULL`인 일반 개인 chat route는 여러 room이 같은 `chat_id`를 공유할 수 있다. forum `message_thread_id`가 있는 route는 같은 topic을 둘 이상의 room이 공유하지 못하는 기존 고유 제약을 유지한다.
+- 전역 일일 발송 상한은 선택 room 수에 맞춰 4로 설정했다. 현재 일정은 `Asia/Seoul 23:00`, room당 최대 5개 관심주제이며 AI 하루 $1 상한·원문 인용·진도·중복 억제를 유지한다.
+- 기존 단일 room으로 저장된 과거 데이터는 재분류하지 않는다. 새로 분리 수집된 room 데이터만 해당 room 말풍선에 사용한다.
+- 비공개 forum supergroup 방식은 선택적 대안으로 남지만 현재 운영에는 사용하지 않는다. 봇 N개 방식도 채택하지 않는다.

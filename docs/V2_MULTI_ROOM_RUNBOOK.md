@@ -1,5 +1,15 @@
 # Kakao Radar 2.0 다중 방 전환 절차
 
+> 2026-09-27 현재 운영: 비공개 forum을 필수로 사용하지 않는다. 기존 봇의 본인 1:1 chat ID를 4개 room route가 공유하고, 서버가 room별 독립 digest를 별도 말풍선으로 보낸다. 아래 forum 절차는 사용자가 나중에 topic UI를 원할 때의 선택적 대안이다.
+
+## 현재 개인 chat 공유 모드
+
+1. 봇 토큰과 개인 chat ID는 기존 비밀 파일을 그대로 사용한다.
+2. 각 Kakao room에 같은 `chat_id`, `message_thread_id=NULL`, 서로 다른 display name route를 둔다.
+3. 한 주기에는 새 후보가 있는 room마다 outbox와 Telegram 메시지를 하나씩 만든다.
+4. 각 outbox의 topic과 source window는 반드시 하나의 `room_id`만 포함한다.
+5. 일일 발송 상한은 예상 room 말풍선 수 이상이어야 한다. 현재 4개 room/하루 1회이므로 4다.
+
 이 문서는 코드 배포와 실제 기기 검증을 분리한다. 저장소 테스트 통과만으로 Redmi 수집이나 Telegram 표시 성공을 선언하지 않는다.
 
 ## Telegram 전제
