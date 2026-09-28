@@ -1,5 +1,13 @@
 # 검증 결과
 
+## Telegram 토픽 명령 방 이름 설정 — 2026-09-29
+
+- schema 7에 Telegram long-poll cursor를 추가했다. 저장 값은 숫자 bot ID와 다음 update ID뿐이며 bot token·수신 명령문·사용자 ID를 새 테이블에 복제하지 않는다.
+- 관리자 user ID 일치, bot username suffix, `(chat_id, message_thread_id)` 단일 route 확인, `/name` 조회·변경, 비인가 사용자 무응답, cursor 단조 증가를 Mock Telegram API로 검증했다.
+- PostgreSQL 통합 테스트에서 `rooms`와 `telegram_routes` 이름의 원자적 갱신, route version 증가, 같은 이름의 멱등 처리, 해당 방 pending outbox만 취소, 다른 방 보존, 이후 digest 제목의 새 이름 표시를 검증했다.
+- 전용 `radar_integration_test` 전체 서버 회귀 **194 passed / 0 skipped / 0 failed**, 26.12초, 기존 dependency deprecation warning 2건. Windows의 DB 없는 회귀는 **108 passed / 91 skipped / 0 failed**였다.
+- 실제 bot long polling, 실제 forum topic 명령·확인 응답, 운영 WSL schema 7 적용 및 systemd 서비스 활성화는 실행하지 않았다. 자동 테스트 통과를 실제 Telegram 수신 성공으로 표현하지 않는다.
+
 ## v2.0.0 다중 방 구현 — 2026-09-21
 
 - Android versionCode 6 / versionName 2.0.0. 기존 단일 `binding`/`room_id` preference를 동일 ID의 `RoomBinding` 집합으로 승격하며, 두 합성 방의 메시지·snapshot·대기열 통계를 독립 유지하는 Robolectric 테스트를 추가했다.

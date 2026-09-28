@@ -1,6 +1,6 @@
 # 다중 KakaoTalk 방 수집과 Telegram 토픽 라우팅 설계안
 
-> 2026-09-21 구현 진행: Android 다중 binding/방별 공정 업로드, 서버 schema 6 방별 상태·route, 방별 outbox와 Telegram `message_thread_id` 전달까지 코드에 반영했다. 합성 테스트와 실제 Redmi/WSL/Telegram 운영 검증은 구분한다.
+> 2026-09-29 후속 구현: Android 다중 binding/방별 공정 업로드와 서버 schema 6 route 위에 schema 7의 Telegram 명령 cursor를 추가했다. 관리자는 각 forum topic에서 `/name 새 이름`으로 연결된 방의 표시명을 설정한다. 합성 테스트와 실제 Redmi/WSL/Telegram 운영 검증은 구분한다.
 
 - 상태: **설계 확정 · 구현 검증 중**
 - 작성일: 2026-09-19

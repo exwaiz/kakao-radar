@@ -7,6 +7,7 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from radar_server.app import create_app
+from radar_server.store import RouteDestinationAmbiguous
 
 
 @pytest.fixture
@@ -187,3 +188,31 @@ def test_multiple_rooms_expose_independent_status_and_versioned_routes(setup):
     routes=client.get("/v1/telegram/routes",headers=headers).json()["items"]
     assert {(item["room_id"],item["message_thread_id"]) for item in routes}=={
         (str(room),101),(str(second),202)}
+    renamed=store.rename_telegram_room("-1001234567890",101,"  새   이름  ")
+    assert renamed["changed"] and renamed["display_name"]=="새 이름" and renamed["version"]==2
+    assert store.rename_telegram_room("-1001234567890",101,"새 이름")["changed"] is False
+    status=client.get("/v1/status",headers=headers).json()
+    first=next(item for item in status["rooms"] if item["room_id"]==str(room))
+    assert first["display_name"]==first["route_display_name"]=="새 이름"
+    store.advance_telegram_command_offset(123456,42)
+    store.advance_telegram_command_offset(123456,40)
+    assert store.telegram_command_offset(123456)==42
+
+
+def test_telegram_name_command_refuses_ambiguous_cross_device_destination(setup):
+    _,store,device,room,headers=setup
+    other_device,other_room,other_token=uuid4(),uuid4(),"fixture-"+str(uuid4())
+    store.update_route(device,room,chat_id="-1001234567890",message_thread_id=101,
+        display_name="첫 기기",enabled=True,expected_version=0)
+    store.provision(other_device,other_room,other_token,"다른 기기")
+    store.update_route(other_device,other_room,chat_id="-1001234567890",message_thread_id=101,
+        display_name="다른 기기",enabled=True,expected_version=0)
+    try:
+        with pytest.raises(RouteDestinationAmbiguous):
+            store.rename_telegram_room("-1001234567890",101,"바뀌면 안 됨")
+        assert store.status(device)["rooms"][0]["display_name"]!="바뀌면 안 됨"
+        assert store.status(other_device)["rooms"][0]["display_name"]!="바뀌면 안 됨"
+    finally:
+        with store.connect() as db:
+            db.execute("DELETE FROM rooms WHERE device_id=%s",(other_device,))
+            db.execute("DELETE FROM devices WHERE device_id=%s",(other_device,))

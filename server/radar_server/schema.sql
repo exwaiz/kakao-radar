@@ -190,3 +190,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS delivery_one_active_room ON delivery_outbox(de
  WHERE room_id IS NOT NULL AND status IN ('pending','sending','retry_wait');
 CREATE INDEX IF NOT EXISTS delivery_room_created ON delivery_outbox(device_id,room_id,created_at);
 INSERT INTO schema_versions(version) VALUES(6) ON CONFLICT DO NOTHING;
+
+-- Telegram command polling stores only the bot numeric ID and the next update ID.
+-- Bot tokens, user messages and room names are never copied into this cursor table.
+CREATE TABLE IF NOT EXISTS telegram_command_state (
+ bot_id BIGINT PRIMARY KEY CHECK(bot_id > 0),
+ next_update_id BIGINT NOT NULL CHECK(next_update_id >= 0),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO schema_versions(version) VALUES(7) ON CONFLICT DO NOTHING;

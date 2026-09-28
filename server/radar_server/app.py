@@ -159,7 +159,10 @@ def create_app(dsn=None, digest_links=None):
     @app.put("/v1/rooms/{room_id}", openapi_extra={"requestBody":{"required":True,"content":{"application/json":{"schema":RoomUpdate.model_json_schema()}}}})
     async def room_update(room_id: UUID, request: Request, device=Depends(principal)):
         update = await bounded_model(request, RoomUpdate)
-        result = await run_in_threadpool(store.update_room, device, room_id, update.display_name)
+        try:
+            result = await run_in_threadpool(store.update_room, device, room_id, update.display_name)
+        except ValueError:
+            raise HTTPException(422, "Invalid room display name") from None
         if result is None:
             raise HTTPException(404, "Room not found")
         return result
@@ -177,6 +180,8 @@ def create_app(dsn=None, digest_links=None):
             raise HTTPException(409, "Route version changed") from None
         except RouteDestinationConflict:
             raise HTTPException(409, "Telegram destination is already assigned") from None
+        except ValueError:
+            raise HTTPException(422, "Invalid Telegram route") from None
         if result is None:
             raise HTTPException(404, "Room not found")
         return result

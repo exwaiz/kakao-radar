@@ -52,9 +52,23 @@ services:
       RADAR_NTFY_URL: ${RADAR_NTFY_URL:-}
       RADAR_NTFY_TOPIC: ${RADAR_NTFY_TOPIC:-}
       RADAR_NTFY_TOKEN: ${RADAR_NTFY_TOKEN:-}
+      RADAR_TELEGRAM_BOT_TOKEN: ${RADAR_TELEGRAM_BOT_TOKEN:-}
+      RADAR_TELEGRAM_CHAT_ID: ${RADAR_TELEGRAM_CHAT_ID:-}
       RADAR_PUBLIC_URL: ${RADAR_PUBLIC_URL:-}
       RADAR_DIGEST_LINK_SECRET: ${RADAR_DIGEST_LINK_SECRET:-}
     command: ["python", "-m", "radar_server.delivery_worker"]
+    depends_on:
+      db:
+        condition: service_healthy
+  telegram-commands:
+    build: ./server
+    profiles: ["telegram-commands"]
+    environment:
+      RADAR_DATABASE_URL: postgresql://radar:${RADAR_DB_PASSWORD}@db:5432/radar
+      RADAR_TELEGRAM_BOT_TOKEN: ${RADAR_TELEGRAM_BOT_TOKEN:-}
+      RADAR_TELEGRAM_CHAT_ID: ${RADAR_TELEGRAM_CHAT_ID:-}
+      RADAR_TELEGRAM_ADMIN_USER_ID: ${RADAR_TELEGRAM_ADMIN_USER_ID:-}
+    command: ["python", "-m", "radar_server.telegram_command_worker"]
     depends_on:
       db:
         condition: service_healthy

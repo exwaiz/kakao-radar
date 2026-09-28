@@ -16,7 +16,7 @@
 ## 안전한 배포 순서
 
 1. 운영 PostgreSQL을 백업하고 현재 앱·서버 버전과 대기 outbox를 기록한다.
-2. 서버 코드를 배포하고 `python -m radar_server.manage migrate`로 schema 6을 적용한다. 이 단계는 원문이나 기존 방 ID를 다시 쓰지 않는다.
+2. 서버 코드를 배포하고 `python -m radar_server.manage migrate`로 schema 7을 적용한다. schema 6의 다중 방 구조와 숫자 Telegram update cursor만 추가하며 원문이나 기존 방 ID를 다시 쓰지 않는다.
 3. Android 2.0 APK를 업데이트 설치한다. 기존 단일 선택은 같은 `room_id`의 선택 집합으로 자동 승격된다.
 4. 앱의 다중 선택 화면에서 방을 추가한다. 선택이 바뀌면 수집은 자동으로 일시 중지된다. 화면에 표시된 각 방의 UUID를 복사한다.
 5. 각 새 UUID를 같은 기기 UUID와 같은 기기 token으로 provision한다. token은 CLI의 숨김 입력으로만 제공한다.
@@ -32,8 +32,17 @@ python -m radar_server.manage set-route --device <device-uuid> --room <room-uuid
 python -m radar_server.manage list-rooms --device <device-uuid>
 ```
 
-7. `/v1/status`에서 방별 최근 수신·저장 수·분석 backlog를, `/v1/delivery/status`에서 미라우팅 방을 확인한다. 모든 방이 provision·route된 뒤 Android 수집과 동기화를 다시 켠다.
-8. 한 방씩 합성 아닌 새 메시지를 보내 APK 방별 저장, WSL 방별 수신, 해당 Telegram topic 수신을 순서대로 확인한다. callback 수를 메시지 수나 수집률로 기록하지 않는다.
+7. 기존 private 환경 파일에 명령을 보낼 본인의 양수 Telegram user ID를 `RADAR_TELEGRAM_ADMIN_USER_ID`로 저장한다. 기존 양수 `RADAR_TELEGRAM_CHAT_ID`가 본인의 private chat ID라면 생략해도 된다. forum supergroup의 음수 chat ID를 관리자 ID로 사용하지 않는다.
+
+```text
+python -m radar_server.manage migrate
+sudo systemctl enable --now kakao-radar-telegram-commands
+```
+
+각 방의 Telegram 토픽에서 `/name 새 이름`을 보내고 같은 토픽으로 확인 응답이 오는지 확인한다. `/name`은 현재 이름, `/help`는 사용법을 표시한다. 명령은 관리자 ID가 일치하고 `(chat_id, message_thread_id)`에 활성 route가 정확히 하나 있을 때만 반영된다. webhook이나 다른 long-poll 프로세스가 같은 봇의 update를 소비하고 있으면 이 worker와 함께 사용할 수 없다.
+
+8. `/v1/status`에서 방별 최근 수신·저장 수·분석 backlog를, `/v1/delivery/status`에서 미라우팅 방을 확인한다. 모든 방이 provision·route된 뒤 Android 수집과 동기화를 다시 켠다.
+9. 한 방씩 합성 아닌 새 메시지를 보내 APK 방별 저장, WSL 방별 수신, 해당 Telegram topic 수신을 순서대로 확인한다. callback 수를 메시지 수나 수집률로 기록하지 않는다.
 
 ## 롤백
 
@@ -45,6 +54,7 @@ python -m radar_server.manage list-rooms --device <device-uuid>
 
 - Redmi의 실제 N개 KakaoTalk 방 식별과 장시간/화면 OFF 수집률
 - 기존 v1 설치에서 실제 preference 및 Room DB 보존
-- 운영 WSL schema 5 → 6 적용과 서비스 재시작
+- 운영 WSL schema 5 → 7 적용과 서비스 재시작
+- 실제 관리자 `/name` 명령 수신과 해당 forum topic 확인 응답
 - 실제 비공개 Telegram forum의 topic ID 및 봇 권한
 - 방별 요약 유용성과 일일 AI $1 예산 안에서의 N방 부하
