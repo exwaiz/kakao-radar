@@ -16,7 +16,7 @@ Redmi Note 14 5G / Android 15에서 여러 KakaoTalk 방의 알림을 독립적�
 
 - 본폰 정기 요약 큐, 시간대/시간표·조용한 시간·일일 시도 상한, 요약/내용 중복 억제.
 - Telegram 개인 채팅 및 ntfy HTTPS JSON 어댑터, 제한 재시도와 불명확한 결과 확인 대기, Worker 중단/소유권 복구.
-- Telegram forum의 각 방 토픽에서 관리자가 `/name 새 이름`을 보내 방 표시명을 바꾸고, 이후 요약 제목에 그 이름을 표시한다.
+- Telegram forum에서는 `/name 새 이름`, 여러 방을 공유하는 개인 봇 채팅에서는 `/rooms`와 `/name 방코드 새 이름`으로 방 표시명을 바꾼다.
 - 요약 묶음에 한정된 링크로 전체 요점·URL·근거 조회, 유용함/관심 없음 피드백. [M4 실행·연결 안내](docs/M4_DELIVERY.md).
 
 - 알림 접근 설정과 연결 상태 확인, 대상 방 발견·선택, 수집 시작·중지.
@@ -43,9 +43,9 @@ Redmi Note 14 5G / Android 15에서 여러 KakaoTalk 방의 알림을 독립적�
 
 ## Telegram에서 방 이름 설정
 
-다중 방 route를 등록한 뒤 해당 Telegram 토픽에서 `/name 새 이름`을 보낸다. `/name`만 보내면 현재 이름을 확인하고 `/help`로 사용법을 볼 수 있다. 명령은 `RADAR_TELEGRAM_ADMIN_USER_ID`와 일치하는 사용자만 실행할 수 있다. 기존 개인 채팅의 양수 `RADAR_TELEGRAM_CHAT_ID`가 사용자 ID라면 이를 기본 관리자 ID로 재사용한다.
+forum topic에서는 `/name 새 이름`을 보낸다. 기존처럼 여러 Kakao 방이 개인 봇 채팅 하나를 공유하면 `/rooms`로 방코드를 확인하고 `/name 방코드 새 이름`을 보낸다. `/name`만 보내도 단일 route에서는 현재 이름, 공유 채팅에서는 방 목록을 표시한다. `/help`는 사용법을 보여준다. 명령은 `RADAR_TELEGRAM_ADMIN_USER_ID`와 일치하는 사용자만 실행할 수 있다. 기존 개인 채팅의 양수 `RADAR_TELEGRAM_CHAT_ID`가 사용자 ID라면 이를 기본 관리자 ID로 재사용한다.
 
-서버는 명령이 온 `(chat_id, message_thread_id)`에 정확히 하나의 활성 route가 있을 때만 이름을 바꾼다. 변경은 Kakao 방과 Telegram route에 함께 저장되며, 해당 방의 아직 시작하지 않은 발송만 취소해 새 이름으로 다시 계획한다. 봇 토큰이나 받은 명령문은 DB에 저장하지 않고 Telegram update cursor만 보관한다. WSL에서는 schema migration 뒤 `kakao-radar-telegram-commands` 서비스를 명시적으로 활성화한다. 자세한 순서는 [2.0 전환 절차](docs/V2_MULTI_ROOM_RUNBOOK.md)를 따른다.
+서버는 topic의 단일 route 또는 공유 개인 채팅 안의 고유한 방코드가 확인될 때만 이름을 바꾼다. 변경은 Kakao 방과 Telegram route에 함께 저장되며, 해당 방의 아직 시작하지 않은 발송만 취소해 새 이름으로 다시 계획한다. 봇 토큰이나 받은 명령문은 DB에 저장하지 않고 Telegram update cursor만 보관한다. 자세한 순서는 [2.0 전환 절차](docs/V2_MULTI_ROOM_RUNBOOK.md)를 따른다.
 
 직접 설치한 APK의 알림 접근 메뉴가 제한되는 경우에는 Android가 표시하는 앱 정보의 제한 설정 안내를 확인한다. 기기의 보안 검사를 일괄 해제하거나 보호 기능을 우회하지 않는다. 접근 권한은 사용자가 단말에서 직접 부여해야 한다.
 

@@ -3,10 +3,10 @@
 ## Telegram 토픽 명령 방 이름 설정 — 2026-09-29
 
 - schema 7에 Telegram long-poll cursor를 추가했다. 저장 값은 숫자 bot ID와 다음 update ID뿐이며 bot token·수신 명령문·사용자 ID를 새 테이블에 복제하지 않는다.
-- 관리자 user ID 일치, bot username suffix, `(chat_id, message_thread_id)` 단일 route 확인, `/name` 조회·변경, 비인가 사용자 무응답, cursor 단조 증가를 Mock Telegram API로 검증했다.
+- 관리자 user ID 일치, bot username suffix, topic의 `/name` 조회·변경, 공유 private chat의 `/rooms` 및 `/name 방코드 새 이름`, 비인가 사용자 무응답, cursor 단조 증가를 Mock Telegram API로 검증했다.
 - PostgreSQL 통합 테스트에서 `rooms`와 `telegram_routes` 이름의 원자적 갱신, route version 증가, 같은 이름의 멱등 처리, 해당 방 pending outbox만 취소, 다른 방 보존, 이후 digest 제목의 새 이름 표시를 검증했다.
-- 전용 `radar_integration_test` 전체 서버 회귀 **194 passed / 0 skipped / 0 failed**, 26.12초, 기존 dependency deprecation warning 2건. Windows의 DB 없는 회귀는 **108 passed / 91 skipped / 0 failed**였다.
-- 실제 bot long polling, 실제 forum topic 명령·확인 응답, 운영 WSL schema 7 적용 및 systemd 서비스 활성화는 실행하지 않았다. 자동 테스트 통과를 실제 Telegram 수신 성공으로 표현하지 않는다.
+- 전용 `radar_integration_test` 전체 서버 회귀 **196 passed / 0 skipped / 0 failed**, 39.07초, dependency/cache warning 3건. Windows의 이전 DB 없는 회귀는 **108 passed / 91 skipped / 0 failed**였다.
+- 운영 WSL schema 7 적용, private chat의 중복 NULL-thread route 4개 보존, command systemd 서비스 활성 상태, 기존 Telegram update cursor 처리를 확인했다. Telegram API 송신은 성공했지만 사용자의 본폰 화면 표시 확인은 별도다.
 
 ## v2.0.0 다중 방 구현 — 2026-09-21
 

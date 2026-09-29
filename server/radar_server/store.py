@@ -158,8 +158,8 @@ class Store:
             if version != expected_version:
                 raise RouteVersionConflict()
             duplicate = db.execute("""SELECT room_id FROM telegram_routes WHERE device_id=%s AND chat_id=%s
-                AND COALESCE(message_thread_id,0)=COALESCE(%s,0) AND enabled AND room_id<>%s""",
-                (device, chat_id, message_thread_id, room)).fetchone()
+                AND %s IS NOT NULL AND message_thread_id=%s AND enabled AND room_id<>%s""",
+                (device, chat_id, message_thread_id, message_thread_id, room)).fetchone()
             if enabled and duplicate:
                 raise RouteDestinationConflict()
             try:
@@ -198,6 +198,39 @@ class Store:
         with self.connect() as db:
             return self._telegram_destination(db, chat_id, message_thread_id)
 
+    def telegram_destinations(self, chat_id, message_thread_id):
+        with self.connect() as db:
+            return db.execute("""SELECT tr.device_id,tr.room_id,tr.chat_id,tr.message_thread_id,
+                COALESCE(NULLIF(tr.display_name,''),r.display_name) AS display_name,
+                tr.display_name AS route_display_name,tr.version
+                FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
+                JOIN devices d USING(device_id) WHERE tr.chat_id=%s
+                AND COALESCE(tr.message_thread_id,0)=COALESCE(%s,0)
+                AND tr.enabled AND r.allowed AND d.active ORDER BY tr.device_id,tr.room_id""",
+                (str(chat_id), message_thread_id)).fetchall()
+
+    @staticmethod
+    def _rename_telegram_route(db, route, display_name):
+        room = db.execute("""SELECT display_name FROM rooms
+            WHERE device_id=%s AND room_id=%s FOR UPDATE""",
+            (route["device_id"], route["room_id"])).fetchone()
+        if room["display_name"] == display_name and route["route_display_name"] == display_name:
+            return {**route, "changed": False}
+        db.execute("""UPDATE rooms SET display_name=%s,updated_at=clock_timestamp()
+            WHERE device_id=%s AND room_id=%s""",
+            (display_name, route["device_id"], route["room_id"]))
+        updated = db.execute("""UPDATE telegram_routes SET display_name=%s,version=version+1,
+            updated_at=clock_timestamp() WHERE device_id=%s AND room_id=%s
+            RETURNING device_id,room_id,chat_id,message_thread_id,display_name,version""",
+            (display_name, route["device_id"], route["room_id"])).fetchone()
+        from .delivery_store import DeliveryStore
+        pending = db.execute("""SELECT delivery_id FROM delivery_outbox
+            WHERE device_id=%s AND room_id=%s AND status IN ('pending','retry_wait') FOR UPDATE""",
+            (route["device_id"], route["room_id"])).fetchall()
+        for item in pending:
+            DeliveryStore._cancel(db, item["delivery_id"], "route_name_changed")
+        return {**updated, "changed": True}
+
     def rename_telegram_room(self, chat_id, message_thread_id, display_name):
         """Rename exactly one active room mapped to a Telegram chat/topic."""
         display_name = normalize_display_name(display_name)
@@ -205,25 +238,29 @@ class Store:
             route = self._telegram_destination(db, chat_id, message_thread_id, lock=True)
             if route is None:
                 return None
-            room = db.execute("""SELECT display_name FROM rooms
-                WHERE device_id=%s AND room_id=%s FOR UPDATE""",
-                (route["device_id"], route["room_id"])).fetchone()
-            if room["display_name"] == display_name and route["route_display_name"] == display_name:
-                return {**route, "changed": False}
-            db.execute("""UPDATE rooms SET display_name=%s,updated_at=clock_timestamp()
-                WHERE device_id=%s AND room_id=%s""",
-                (display_name, route["device_id"], route["room_id"]))
-            updated = db.execute("""UPDATE telegram_routes SET display_name=%s,version=version+1,
-                updated_at=clock_timestamp() WHERE device_id=%s AND room_id=%s
-                RETURNING device_id,room_id,chat_id,message_thread_id,display_name,version""",
-                (display_name, route["device_id"], route["room_id"])).fetchone()
-            from .delivery_store import DeliveryStore
-            pending = db.execute("""SELECT delivery_id FROM delivery_outbox
-                WHERE device_id=%s AND room_id=%s AND status IN ('pending','retry_wait') FOR UPDATE""",
-                (route["device_id"], route["room_id"])).fetchall()
-            for item in pending:
-                DeliveryStore._cancel(db, item["delivery_id"], "route_name_changed")
-        return {**updated, "changed": True}
+            return self._rename_telegram_route(db, route, display_name)
+
+    def rename_telegram_room_by_key(self, chat_id, message_thread_id, room_key, display_name):
+        """Rename one room in a shared private bot chat using an unambiguous UUID prefix."""
+        display_name = normalize_display_name(display_name)
+        room_key = str(room_key).strip().casefold()
+        if not re.fullmatch(r"[0-9a-f]{8,36}", room_key):
+            raise ValueError("Invalid room key")
+        with self.connect() as db:
+            rows = db.execute("""SELECT tr.device_id,tr.room_id,tr.chat_id,tr.message_thread_id,
+                COALESCE(NULLIF(tr.display_name,''),r.display_name) AS display_name,
+                tr.display_name AS route_display_name,tr.version
+                FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
+                JOIN devices d USING(device_id) WHERE tr.chat_id=%s
+                AND COALESCE(tr.message_thread_id,0)=COALESCE(%s,0)
+                AND lower(tr.room_id::text) LIKE %s AND tr.enabled AND r.allowed AND d.active
+                ORDER BY tr.device_id,tr.room_id FOR UPDATE OF tr,r""",
+                (str(chat_id), message_thread_id, room_key + "%")).fetchall()
+            if len(rows) > 1:
+                raise RouteDestinationAmbiguous()
+            if not rows:
+                return None
+            return self._rename_telegram_route(db, rows[0], display_name)
 
     def telegram_command_offset(self, bot_id):
         with self.connect() as db:

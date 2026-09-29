@@ -2,6 +2,7 @@ import json
 
 import httpx
 import pytest
+from uuid import UUID
 
 from radar_server.delivery_channels import ChannelConfigurationError
 from radar_server.telegram_command_worker import TelegramCommandWorker, parse_command
@@ -27,6 +28,10 @@ class StubStore:
     def telegram_destination(self, chat_id, thread_id):
         assert (chat_id, thread_id) == ("-1009876543210", 77)
         return self.route
+
+    def telegram_destinations(self, chat_id, thread_id):
+        assert (chat_id, thread_id) == ("-1009876543210", 77)
+        return [{**self.route, "room_id": UUID("25485c30-0000-4000-8000-000000000001")}]
 
     def rename_telegram_room(self, chat_id, thread_id, display_name):
         assert (chat_id, thread_id) == ("-1009876543210", 77)
@@ -97,3 +102,48 @@ def test_private_chat_id_can_supply_admin_but_group_id_cannot(monkeypatch):
     monkeypatch.setenv("RADAR_TELEGRAM_CHAT_ID", "-1009876543210")
     with pytest.raises(ChannelConfigurationError):
         TelegramCommandWorker.from_env(StubStore())
+
+
+def test_rooms_command_lists_selector_for_shared_private_chat():
+    class SharedStore(StubStore):
+        def telegram_destinations(self, chat_id, thread_id):
+            return [
+                {"room_id": UUID("25485c30-0000-4000-8000-000000000001"),
+                 "display_name": "카카오방 A"},
+                {"room_id": UUID("5a4a05f6-0000-4000-8000-000000000002"),
+                 "display_name": "카카오방 B"},
+            ]
+
+    store, sent = SharedStore(), []
+    worker = TelegramCommandWorker(store, TOKEN, 987654321,
+        transport=telegram_transport([update("/rooms")], sent))
+    assert worker.run_once(wait=False) == {"rooms": 1}
+    assert "25485c30  카카오방 A" in sent[0]["text"]
+    assert "/name 방코드 새 이름" in sent[0]["text"]
+
+
+def test_shared_private_chat_name_uses_room_selector():
+    class SharedStore(StubStore):
+        def telegram_destinations(self, chat_id, thread_id):
+            return [
+                {"room_id": UUID("25485c30-0000-4000-8000-000000000001"),
+                 "display_name": "카카오방 A"},
+                {"room_id": UUID("5a4a05f6-0000-4000-8000-000000000002"),
+                 "display_name": "카카오방 B"},
+            ]
+
+        def telegram_destination(self, chat_id, thread_id):
+            from radar_server.store import RouteDestinationAmbiguous
+            raise RouteDestinationAmbiguous()
+
+        def rename_telegram_room_by_key(self, chat_id, thread_id, room_key, display_name):
+            assert (room_key, display_name) == ("25485c30", "광교 아파트")
+            self.renames.append(display_name)
+            return {"changed": True}
+
+    store, sent = SharedStore(), []
+    worker = TelegramCommandWorker(store, TOKEN, 987654321,
+        transport=telegram_transport([update("/name 25485c30 광교 아파트")], sent))
+    assert worker.run_once(wait=False) == {"renamed": 1}
+    assert store.renames == ["광교 아파트"]
+    assert sent[0]["text"] == "이름을 변경했습니다: 광교 아파트"

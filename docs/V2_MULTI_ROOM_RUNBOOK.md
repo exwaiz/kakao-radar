@@ -39,7 +39,7 @@ python -m radar_server.manage migrate
 sudo systemctl enable --now kakao-radar-telegram-commands
 ```
 
-각 방의 Telegram 토픽에서 `/name 새 이름`을 보내고 같은 토픽으로 확인 응답이 오는지 확인한다. `/name`은 현재 이름, `/help`는 사용법을 표시한다. 명령은 관리자 ID가 일치하고 `(chat_id, message_thread_id)`에 활성 route가 정확히 하나 있을 때만 반영된다. webhook이나 다른 long-poll 프로세스가 같은 봇의 update를 소비하고 있으면 이 worker와 함께 사용할 수 없다.
+각 방의 Telegram 토픽에서는 `/name 새 이름`을 보낸다. 여러 방이 기존 private chat 하나를 공유하면 `/rooms` 뒤 `/name 방코드 새 이름`을 보낸다. `/name`은 단일 route의 현재 이름 또는 공유 route 목록을, `/help`는 사용법을 표시한다. 명령은 관리자 ID와 단일 topic route 또는 고유 방코드가 확인될 때만 반영된다. webhook이나 다른 long-poll 프로세스가 같은 봇의 update를 소비하고 있으면 이 worker와 함께 사용할 수 없다.
 
 8. `/v1/status`에서 방별 최근 수신·저장 수·분석 backlog를, `/v1/delivery/status`에서 미라우팅 방을 확인한다. 모든 방이 provision·route된 뒤 Android 수집과 동기화를 다시 켠다.
 9. 한 방씩 합성 아닌 새 메시지를 보내 APK 방별 저장, WSL 방별 수신, 해당 Telegram topic 수신을 순서대로 확인한다. callback 수를 메시지 수나 수집률로 기록하지 않는다.
@@ -55,6 +55,6 @@ sudo systemctl enable --now kakao-radar-telegram-commands
 - Redmi의 실제 N개 KakaoTalk 방 식별과 장시간/화면 OFF 수집률
 - 기존 v1 설치에서 실제 preference 및 Room DB 보존
 - 운영 WSL schema 5 → 7 적용과 서비스 재시작
-- 실제 관리자 `/name` 명령 수신과 해당 forum topic 확인 응답
+- 실제 관리자 명령 수신과 확인 응답(2026-09-29 private chat의 기존 `/name`, `/help` update 처리 및 worker active 확인; 사용자의 화면 확인은 별도)
 - 실제 비공개 Telegram forum의 topic ID 및 봇 권한
 - 방별 요약 유용성과 일일 AI $1 예산 안에서의 N방 부하

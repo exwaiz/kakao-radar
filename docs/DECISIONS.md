@@ -4,6 +4,7 @@
 
 - 기존 봇 하나와 D-018의 방별 forum topic route를 그대로 사용한다. 별도 봇을 방마다 만들지 않는다.
 - 사용자는 해당 토픽에서 `/name 새 이름`을 보내 연결된 Kakao 방 표시명을 바꾼다. `/name`은 현재 이름, `/help`는 사용법을 반환한다.
+- 기존 운영처럼 여러 방이 같은 private chat route를 공유할 수도 있다. 이 경우 메시지는 계속 방별 outbox/말풍선으로 보내되, 명령은 `/rooms`가 반환한 UUID 앞 8자리 방코드로 `/name 방코드 새 이름`을 사용한다. NULL thread destination 중복은 허용하고 forum의 non-NULL topic destination만 유일하게 유지한다.
 - 명령 작성자의 양수 Telegram user ID가 `RADAR_TELEGRAM_ADMIN_USER_ID`와 정확히 일치해야 한다. 기존 양수 private chat ID는 호환 기본값으로만 사용할 수 있으며, 음수 supergroup chat ID를 사용자 인증으로 취급하지 않는다.
 - `(chat_id, message_thread_id)`가 활성 route 하나와 정확히 일치할 때만 `rooms.display_name`과 `telegram_routes.display_name`을 같은 트랜잭션에서 갱신한다. 여러 device의 route가 같은 목적지에 겹치면 변경하지 않는다.
 - route version을 올리고 아직 시작하지 않은 해당 방 outbox만 취소한다. 이미 sending/accepted/uncertain인 발송과 다른 방은 바꾸지 않는다. 다음 digest 제목에는 새 표시명을 넣는다.

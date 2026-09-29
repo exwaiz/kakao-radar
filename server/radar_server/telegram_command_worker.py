@@ -13,7 +13,7 @@ from .store import RouteDestinationAmbiguous, Store, normalize_display_name
 
 
 TOKEN_PATTERN = re.compile(r"[0-9]{5,20}:[A-Za-z0-9_-]{20,100}")
-COMMAND_PATTERN = re.compile(r"^/(name|help|start)(?:@([A-Za-z0-9_]{5,32}))?(?:\s+([\s\S]*))?$")
+COMMAND_PATTERN = re.compile(r"^/(name|rooms|help|start)(?:@([A-Za-z0-9_]{5,32}))?(?:\s+([\s\S]*))?$")
 
 
 class TelegramCommandError(Exception):
@@ -112,6 +112,17 @@ class TelegramCommandWorker:
                 or thread_id is not None and result.get("message_thread_id") != thread_id):
             raise TelegramCommandError("invalid_response")
 
+    @staticmethod
+    def _room_list(routes):
+        if not routes:
+            return "이 채팅에 연결된 Kakao 방이 없습니다."
+        lines = ["연결된 Kakao 방:"]
+        for route in routes:
+            key = str(route["room_id"])[:8]
+            lines.append(f"• {key}  {route['display_name'] or '(이름 없음)'}")
+        lines += ["", "변경: /name 방코드 새 이름"]
+        return "\n".join(lines)
+
     def _process_update(self, update):
         message = update.get("message") if isinstance(update, dict) else None
         if not isinstance(message, dict):
@@ -132,14 +143,37 @@ class TelegramCommandWorker:
         chat_id = str(chat["id"])
         if command in ("help", "start"):
             self._send(chat_id, thread_id,
-                       "이 토픽의 Kakao 방 이름을 바꾸려면 /name 새 이름 을 보내세요.\n"
-                       "현재 이름을 확인하려면 /name 만 보내세요.")
+                       "방 목록: /rooms\n"
+                       "개인 채팅에서 변경: /name 방코드 새 이름\n"
+                       "포럼 토픽에서 변경: /name 새 이름\n"
+                       "현재 이름 또는 목록 확인: /name")
             return "help"
+        routes = self.store.telegram_destinations(chat_id, thread_id)
+        if command == "rooms":
+            self._send(chat_id, thread_id, self._room_list(routes))
+            return "rooms"
         try:
             route = self.store.telegram_destination(chat_id, thread_id)
         except RouteDestinationAmbiguous:
-            self._send(chat_id, thread_id, "이 토픽에 여러 방이 연결되어 있어 이름을 바꾸지 않았습니다.")
-            return "ambiguous"
+            if not argument:
+                self._send(chat_id, thread_id, self._room_list(routes))
+                return "rooms"
+            room_key, separator, display_name = argument.partition(" ")
+            if not separator or not display_name.strip():
+                self._send(chat_id, thread_id, self._room_list(routes))
+                return "select_room"
+            try:
+                renamed = self.store.rename_telegram_room_by_key(
+                    chat_id, thread_id, room_key, display_name.strip())
+            except (ValueError, RouteDestinationAmbiguous):
+                self._send(chat_id, thread_id, "방코드나 이름이 올바르지 않습니다. /rooms로 다시 확인해주세요.")
+                return "invalid_name"
+            if renamed is None:
+                self._send(chat_id, thread_id, "해당 방코드를 찾지 못했습니다. /rooms로 다시 확인해주세요.")
+                return "not_mapped"
+            prefix = "이름을 변경했습니다" if renamed["changed"] else "이미 같은 이름입니다"
+            self._send(chat_id, thread_id, f"{prefix}: {display_name.strip()}")
+            return "renamed" if renamed["changed"] else "unchanged"
         if route is None:
             self._send(chat_id, thread_id, "이 토픽에 연결된 Kakao 방이 없습니다.")
             return "not_mapped"

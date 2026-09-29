@@ -160,8 +160,12 @@ CREATE TABLE IF NOT EXISTS telegram_routes (
  FOREIGN KEY(device_id,room_id) REFERENCES rooms(device_id,room_id) ON DELETE CASCADE,
  CHECK(chat_id ~ '^-?[0-9]{1,20}$'), CHECK(message_thread_id IS NULL OR message_thread_id > 0)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS telegram_route_destination
- ON telegram_routes(device_id,chat_id,COALESCE(message_thread_id,0)) WHERE enabled;
+-- Forum topics identify one room by destination. A private bot chat intentionally
+-- carries several room-specific messages, so NULL thread destinations may repeat.
+DROP INDEX IF EXISTS telegram_route_destination;
+CREATE UNIQUE INDEX telegram_route_destination
+ ON telegram_routes(device_id,chat_id,message_thread_id)
+ WHERE enabled AND message_thread_id IS NOT NULL;
 ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS room_id UUID;
 ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS destination_chat_id TEXT;
 ALTER TABLE delivery_outbox ADD COLUMN IF NOT EXISTS message_thread_id BIGINT;
