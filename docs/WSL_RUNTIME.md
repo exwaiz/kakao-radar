@@ -53,7 +53,7 @@ Telegram 제목/첫 핵심 요점은 bold entities, header/주제/인용 등에 
 
 Ubuntu 24.04 WSL, native PostgreSQL 16과 `/opt/kakao-radar/venv`를 사용한다. Docker 설치 중 호스트 디스크 부족을 확인하여 경량 native 구성으로 전환했다. 작업 생성물인 Windows PostgreSQL 중복 도구와 과거 빌드 산출물을 정리했으며 사용자 대화/DB는 삭제하지 않았다.
 
-`kakaoradar` 서비스 계정은 DB superuser/createdb/createrole 권한이 없다. 운영 DB `radar`, 별도 통합 테스트 DB `radar_integration_test`, 연결은 `/var/run/postgresql` Unix socket peer 인증이다. systemd `kakao-radar-api`, `kakao-radar-local-https`, `kakao-radar-analysis`, `kakao-radar-delivery`, `kakao-radar-retention` 서비스를 사용한다.
+`kakaoradar` 서비스 계정은 DB superuser/createdb/createrole 권한이 없다. 운영 DB `radar`, 별도 통합 테스트 DB `radar_integration_test`, 연결은 `/var/run/postgresql` Unix socket peer 인증이다. systemd `kakao-radar-api`, `kakao-radar-local-https`, `kakao-radar-analysis`, `kakao-radar-delivery`, `kakao-radar-retention` 서비스를 사용한다. 일반 API는 WSL loopback에만, USB용 TLS 8443은 WSL NAT 인터페이스에도 수신해 Windows localhost forwarding과 `adb reverse`가 연결되게 한다. Windows 방화벽에 공개 수신 포트를 만들지 않는다.
 
 API는 `127.0.0.1:8000`, 폰 업로드 HTTPS는 `127.0.0.1:8443`이다. USB 연결에서 `adb reverse tcp:8443 tcp:8443`로 폰의 `https://localhost:8443`를 연결한다. 기존 방 선택과 DB를 보존하며 디버그 앱의 private `files/sync-setup.json`을 일회성으로 읽고 즉시 지운다. 기기/방 UUID와 고엔트로피 토큰은 대상 하나에만 허용된다. 서버는 토큰 해시만 저장하고 Android는 Keystore AES-GCM으로 암호화한다.
 

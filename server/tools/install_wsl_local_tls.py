@@ -32,7 +32,7 @@ User=kakaoradar
 WorkingDirectory={server}
 Environment=PYTHONDONTWRITEBYTECODE=1
 EnvironmentFile={state/'runtime.env'}
-ExecStart=/opt/kakao-radar/venv/bin/python tools/runtime.py api --private-env {private_env} --port 8443 --ssl-certfile {cert} --ssl-keyfile {key}
+ExecStart=/opt/kakao-radar/venv/bin/python tools/runtime.py api --private-env {private_env} --host 0.0.0.0 --port 8443 --ssl-certfile {cert} --ssl-keyfile {key}
 Restart=always
 RestartSec=10
 NoNewPrivileges=true
@@ -43,4 +43,5 @@ WantedBy=multi-user.target
     Path('/etc/systemd/system/kakao-radar-local-https.service').write_text(unit)
     subprocess.run(['systemctl','daemon-reload'],check=True)
     subprocess.run(['systemctl','enable','--now','kakao-radar-local-https'],check=True)
-    print('Local HTTPS ready on loopback only; no public tunnel')
+    subprocess.run(['systemctl','restart','kakao-radar-local-https'],check=True)
+    print('Local HTTPS ready for WSL NAT localhost forwarding; no public tunnel')
