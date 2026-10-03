@@ -3,6 +3,7 @@ import json
 import re
 import secrets
 import time
+import unicodedata
 from pathlib import Path
 from uuid import UUID
 
@@ -18,6 +19,20 @@ class RouteVersionConflict(Exception):
 
 class RouteDestinationConflict(Exception):
     pass
+
+
+class RouteDestinationAmbiguous(Exception):
+    pass
+
+
+def normalize_display_name(value):
+    if not isinstance(value, str):
+        raise ValueError("Invalid room display name")
+    value = " ".join(unicodedata.normalize("NFC", value).split())
+    if (not value or len(value) > 120
+            or any(unicodedata.category(character).startswith("C") for character in value)):
+        raise ValueError("Invalid room display name")
+    return value
 
 
 class Store:
@@ -36,8 +51,8 @@ class Store:
     def provision(self, device: UUID, room: UUID, token: str, display_name: str = ""):
         if len(token) < 32:
             raise ValueError("Token must contain at least 32 characters")
-        if len(display_name) > 120:
-            raise ValueError("Room display name is too long")
+        if display_name:
+            display_name = normalize_display_name(display_name)
         with self.connect() as db:
             db.execute("INSERT INTO devices(device_id,token_hash) VALUES(%s,%s) ON CONFLICT(device_id) DO UPDATE SET token_hash=excluded.token_hash, active=true",
                        (device, hashlib.sha256(token.encode()).hexdigest()))
@@ -108,8 +123,7 @@ class Store:
         return self.status(device)["rooms"]
 
     def update_room(self, device, room, display_name):
-        if not display_name or len(display_name) > 120:
-            raise ValueError("Invalid room display name")
+        display_name = normalize_display_name(display_name)
         with self.connect() as db:
             row = db.execute("""UPDATE rooms SET display_name=%s,updated_at=clock_timestamp()
                 WHERE device_id=%s AND room_id=%s AND allowed RETURNING room_id,display_name,allowed,updated_at""",
@@ -125,7 +139,8 @@ class Store:
     def update_route(self, device, room, *, chat_id, message_thread_id, display_name, enabled, expected_version):
         if (not re.fullmatch(r"-?[0-9]{1,20}", str(chat_id or ""))
                 or message_thread_id is not None and (type(message_thread_id) is not int or message_thread_id <= 0)
-                or len(display_name) > 120 or type(expected_version) is not int or expected_version < 0):
+                or not isinstance(display_name, str) or len(display_name) > 120
+                or type(expected_version) is not int or expected_version < 0):
             raise ValueError("Invalid Telegram route")
         with self.connect() as db:
             if not db.execute("SELECT device_id FROM devices WHERE device_id=%s AND active FOR UPDATE", (device,)).fetchone():
@@ -135,6 +150,8 @@ class Store:
             if not allowed:
                 return None
             display_name = display_name or allowed["display_name"]
+            if display_name:
+                display_name = normalize_display_name(display_name)
             current = db.execute("SELECT * FROM telegram_routes WHERE device_id=%s AND room_id=%s FOR UPDATE",
                                  (device, room)).fetchone()
             version = current["version"] if current else 0
@@ -163,6 +180,104 @@ class Store:
             for item in pending:
                 DeliveryStore._cancel(db, item["delivery_id"], "route_changed")
         return row
+
+    @staticmethod
+    def _telegram_destination(db, chat_id, message_thread_id, *, lock=False):
+        suffix = " FOR UPDATE OF tr,r" if lock else ""
+        rows = db.execute("""SELECT tr.device_id,tr.room_id,tr.chat_id,tr.message_thread_id,
+            COALESCE(NULLIF(tr.display_name,''),r.display_name) AS display_name,
+            tr.display_name AS route_display_name,tr.version
+            FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
+            JOIN devices d USING(device_id) WHERE tr.chat_id=%s
+            AND COALESCE(tr.message_thread_id,0)=COALESCE(%s,0)
+            AND tr.enabled AND r.allowed AND d.active ORDER BY tr.device_id,tr.room_id""" + suffix,
+            (str(chat_id), message_thread_id)).fetchall()
+        if len(rows) > 1:
+            raise RouteDestinationAmbiguous()
+        return rows[0] if rows else None
+
+    def telegram_destination(self, chat_id, message_thread_id):
+        with self.connect() as db:
+            return self._telegram_destination(db, chat_id, message_thread_id)
+
+    def telegram_destinations(self, chat_id, message_thread_id):
+        with self.connect() as db:
+            return db.execute("""SELECT tr.device_id,tr.room_id,tr.chat_id,tr.message_thread_id,
+                COALESCE(NULLIF(tr.display_name,''),r.display_name) AS display_name,
+                tr.display_name AS route_display_name,tr.version
+                FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
+                JOIN devices d USING(device_id) WHERE tr.chat_id=%s
+                AND COALESCE(tr.message_thread_id,0)=COALESCE(%s,0)
+                AND tr.enabled AND r.allowed AND d.active ORDER BY tr.device_id,tr.room_id""",
+                (str(chat_id), message_thread_id)).fetchall()
+
+    @staticmethod
+    def _rename_telegram_route(db, route, display_name):
+        room = db.execute("""SELECT display_name FROM rooms
+            WHERE device_id=%s AND room_id=%s FOR UPDATE""",
+            (route["device_id"], route["room_id"])).fetchone()
+        if room["display_name"] == display_name and route["route_display_name"] == display_name:
+            return {**route, "changed": False}
+        db.execute("""UPDATE rooms SET display_name=%s,updated_at=clock_timestamp()
+            WHERE device_id=%s AND room_id=%s""",
+            (display_name, route["device_id"], route["room_id"]))
+        updated = db.execute("""UPDATE telegram_routes SET display_name=%s,version=version+1,
+            updated_at=clock_timestamp() WHERE device_id=%s AND room_id=%s
+            RETURNING device_id,room_id,chat_id,message_thread_id,display_name,version""",
+            (display_name, route["device_id"], route["room_id"])).fetchone()
+        from .delivery_store import DeliveryStore
+        pending = db.execute("""SELECT delivery_id FROM delivery_outbox
+            WHERE device_id=%s AND room_id=%s AND status IN ('pending','retry_wait') FOR UPDATE""",
+            (route["device_id"], route["room_id"])).fetchall()
+        for item in pending:
+            DeliveryStore._cancel(db, item["delivery_id"], "route_name_changed")
+        return {**updated, "changed": True}
+
+    def rename_telegram_room(self, chat_id, message_thread_id, display_name):
+        """Rename exactly one active room mapped to a Telegram chat/topic."""
+        display_name = normalize_display_name(display_name)
+        with self.connect() as db:
+            route = self._telegram_destination(db, chat_id, message_thread_id, lock=True)
+            if route is None:
+                return None
+            return self._rename_telegram_route(db, route, display_name)
+
+    def rename_telegram_room_by_key(self, chat_id, message_thread_id, room_key, display_name):
+        """Rename one room in a shared private bot chat using an unambiguous UUID prefix."""
+        display_name = normalize_display_name(display_name)
+        room_key = str(room_key).strip().casefold()
+        if not re.fullmatch(r"[0-9a-f]{8,36}", room_key):
+            raise ValueError("Invalid room key")
+        with self.connect() as db:
+            rows = db.execute("""SELECT tr.device_id,tr.room_id,tr.chat_id,tr.message_thread_id,
+                COALESCE(NULLIF(tr.display_name,''),r.display_name) AS display_name,
+                tr.display_name AS route_display_name,tr.version
+                FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
+                JOIN devices d USING(device_id) WHERE tr.chat_id=%s
+                AND COALESCE(tr.message_thread_id,0)=COALESCE(%s,0)
+                AND lower(tr.room_id::text) LIKE %s AND tr.enabled AND r.allowed AND d.active
+                ORDER BY tr.device_id,tr.room_id FOR UPDATE OF tr,r""",
+                (str(chat_id), message_thread_id, room_key + "%")).fetchall()
+            if len(rows) > 1:
+                raise RouteDestinationAmbiguous()
+            if not rows:
+                return None
+            return self._rename_telegram_route(db, rows[0], display_name)
+
+    def telegram_command_offset(self, bot_id):
+        with self.connect() as db:
+            row = db.execute("SELECT next_update_id FROM telegram_command_state WHERE bot_id=%s",
+                             (bot_id,)).fetchone()
+        return row["next_update_id"] if row else 0
+
+    def advance_telegram_command_offset(self, bot_id, next_update_id):
+        if type(bot_id) is not int or bot_id <= 0 or type(next_update_id) is not int or next_update_id < 0:
+            raise ValueError("Invalid Telegram update cursor")
+        with self.connect() as db:
+            db.execute("""INSERT INTO telegram_command_state(bot_id,next_update_id) VALUES(%s,%s)
+                ON CONFLICT(bot_id) DO UPDATE SET next_update_id=
+                GREATEST(telegram_command_state.next_update_id,excluded.next_update_id),
+                updated_at=clock_timestamp()""", (bot_id, next_update_id))
 
     def prune(self):
         with self.connect() as db:

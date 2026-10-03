@@ -118,6 +118,17 @@ def test_two_rooms_create_separate_route_snapshotted_outboxes(setup):
     assert [(row['room_id'],row['message_thread_id']) for row in rows] == [(first_room,101),(second_room,202)]
     assert all(row['destination_chat_id']=='-1001234567890' and row['route_version']==1 for row in rows)
     assert all({topic['room_id'] for topic in row['payload']['topics']}=={str(row['room_id'])} for row in rows)
+    assert 'fixture-first' in rows[0]['payload']['title']
+    assert 'fixture-second' in rows[1]['payload']['title']
+    assert store.rename_telegram_room('-1001234567890',101,'새 첫 방')['changed']
+    with store.connect() as db:
+        states={row['room_id']:row['status'] for row in db.execute(
+            'SELECT room_id,status FROM delivery_outbox WHERE delivery_id=ANY(%s)',(planned,)).fetchall()}
+    assert states[first_room]=='cancelled' and states[second_room]=='pending'
+    replanned=delivery.plan(device,manual=True)
+    with store.connect() as db:
+        renamed_payload=db.execute('SELECT payload FROM delivery_outbox WHERE delivery_id=%s',(replanned,)).fetchone()['payload']
+    assert '새 첫 방' in renamed_payload['title']
     claim = delivery.begin_send(device)
     assert (claim.destination_chat_id,claim.message_thread_id,claim.route_version) in {
         ('-1001234567890',101,1),('-1001234567890',202,1)}

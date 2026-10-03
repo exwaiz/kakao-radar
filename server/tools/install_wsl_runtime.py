@@ -22,7 +22,8 @@ for name in ('radar','radar_integration_test'):
     if pg("SELECT count(*) FROM pg_database WHERE datname='"+name+"'") == '0':
         pg('CREATE DATABASE '+name+' OWNER kakaoradar')
 
-for name, component in [('api','api'),('analysis','analysis'),('retention','retention'),('delivery','delivery')]:
+for name, component in [('api','api'),('analysis','analysis'),('retention','retention'),
+                        ('delivery','delivery'),('telegram-commands','telegram-commands')]:
     unit = f'''[Unit]
 Description=Kakao Radar {component}
 After=postgresql.service network-online.target
@@ -47,4 +48,4 @@ WantedBy=multi-user.target
 
 subprocess.run(['systemctl','daemon-reload'],check=True)
 subprocess.run(['systemctl','enable','--now','kakao-radar-api','kakao-radar-retention'],check=True)
-print('WSL database, localhost-only API and retention installed; no public tunnel; analysis/delivery await checks')
+print('WSL database, localhost-only API and retention installed; no public tunnel; analysis/delivery/Telegram commands await checks')

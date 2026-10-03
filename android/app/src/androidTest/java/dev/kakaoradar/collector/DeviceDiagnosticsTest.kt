@@ -2,6 +2,7 @@ package dev.kakaoradar.collector
 
 import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.work.WorkManager
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -10,6 +11,13 @@ import java.util.concurrent.TimeUnit
 
 /** Reads aggregate diagnostics on the phone. Never copies the database or raw chat records. */
 class DeviceDiagnosticsTest {
+    @Test fun cancelStaleSyncBackoffWithoutChangingDataOrCredentials() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val work = WorkManager.getInstance(context)
+        work.cancelUniqueWork("radar-sync-now").result.get(30, TimeUnit.SECONDS)
+        work.cancelUniqueWork("radar-sync-periodic").result.get(30, TimeUnit.SECONDS)
+    }
+
     @Test fun reportAggregateDiagnosticsOnDevice() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val app = instrumentation.targetContext.applicationContext as RadarApp
