@@ -1,6 +1,18 @@
 # WSL 운영 통합 — 2026-09-17
 
-Android 1.0.0 / 서버 1.0.0. 통합 브랜치는 master다. 기준은 기존 M4 브랜치 `12c86a2`이며 `feat/wsl-runtime`에서 통합한다. 라즈베리파이는 필요하지 않다.
+## 2026-09-28 — Telegram 테스트 일정
+
+현재 테스트 일정은 `Asia/Seoul` 11:00 / 15:00 / 20:00 / 23:00이다. 한 슬롯에 room별 최대 4개 말풍선이 생성될 수 있어 일일 발송 상한은 16이며, room당 최대 5개 관심주제를 유지한다. 종료일은 정하지 않았으므로 사용자 지시 전까지 이 일정이 계속된다. 긴급 발송은 꺼져 있다.
+
+## 2026-09-22 — v2.0.0 / schema 6 운영 적용
+
+WSL 운영 서버를 2.0.0으로 배포하고 schema 5→6을 적용했다. 이관 전 DB와 서버 소스는 `/var/backups/kakao-radar`에 checksum과 함께 보존했다. device 1, 기존 room 1, outbox 28건을 유지했고 Redmi backlog 680건을 전송하여 운영 messages/receipts가 각각 1,688건이 됐다. 단말 pending은 0이다.
+
+API/local HTTPS/analysis/delivery/retention 서비스와 health 2.0.0, USB reverse, collector listener bound를 확인했다. WSL이 Windows 호출 종료 뒤 내려가지 않도록 현재 `sleep infinity` keepalive를 숨김 프로세스로 실행 중이다. 이는 Windows 재부팅 뒤 자동 복구를 보장하지 않으므로 기존 `start_wsl_usb.ps1` 절차와 별도로 확인한다.
+
+현재는 기존 단일 방뿐이고 `telegram_routes`는 0개다. 개인 chat fallback은 단일 방 호환으로 유지된다. 추가 방을 선택하면 새 room UUID를 provision하고 forum route를 모두 등록하기 전 다중 방 Telegram 자동 전달 성공을 선언하지 않는다.
+
+아래 문단은 2026-09-17~18의 v1 운영 이력이다. 당시 Android 1.0.0 / 서버 1.0.0 통합 브랜치는 master였고, 기준은 기존 M4 브랜치 `12c86a2` 및 `feat/wsl-runtime`이었다. 라즈베리파이는 필요하지 않다.
 
 ## 9/18 최신 지시 — 1시간 테스트와 v1.0.0 통합
 
@@ -73,3 +85,8 @@ WSL과 노트북이 실행 중이어야 한다. Windows 재부팅/ADB 재시작/
 공개 Cloudflare 터널 생성은 자동 승인 검토에서 공개 범위와 실제 대화 전송에 대한 명시 승인이 부족하다는 이유로 거절됐다. 터널을 시작하지 않았으며 우회하지 않는다. `RADAR_PUBLIC_URL`이 없는 동안 Telegram 상세 링크 버튼은 표시하지 않는다. 정기 요약 본문은 Telegram으로 전송할 수 있다. 본폰에서 웹 근거/피드백을 쓰려면 추후 승인된 외부 HTTPS 또는 private VPN을 구성해야 한다.
 
 최신 집계는 상위 outputs의 `kakao-radar-runtime-check.json`에 저장하며 채팅 원문/닉네임/키는 포함하지 않는다. 사용자 50주제 요약 품질 평가, 본폰 실제 열람, 밤새 운영, 재부팅 뒤 방 identity와 수집률은 아직 통과한 것으로 기록하지 않는다.
+## 2026-09-27 — schema 7 / 개인 chat 방별 말풍선
+
+운영 기본 route는 기존 Telegram 봇과 기존 개인 chat 하나를 4개 Kakao room이 공유하는 방식이다. `message_thread_id`는 모두 NULL이며, `카카오방 A/B/C/D`별 outbox와 말풍선을 별도로 생성한다. schema 7, daily notification limit 4, Asia/Seoul 23:00, room당 최대 5개 주제를 사용한다. forum topic은 현재 사용하지 않는다.
+
+Redmi 적체 4,233건을 USB reverse 복구 후 round-robin 업로드해 단말 pending 0, WSL messages 5,321을 확인했다. 실제 방별 Telegram 말풍선 4개는 API accepted였고, 사용자가 모바일 캡처로 방 라벨이 구분된 독립 말풍선 표시를 확인했다. 다음 due는 2026-09-28 23:00 KST다.

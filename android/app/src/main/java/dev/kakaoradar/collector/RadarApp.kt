@@ -56,14 +56,19 @@ class RadarApp : Application() {
 
     fun capture(parsed: ParsedNotification, observedAt: Long) {
         if (!config.enabled) return
-        val binding = config.binding ?: return
-        if (!binding.matches(parsed.room)) return
-        if (binding.shortcut.isBlank() && config.hasTitleCollision(binding)) {
+        val resolved = config.resolve(parsed.room)
+        if (resolved.ambiguous) {
+            db.dao().diagnostic(Diagnostic(at = observedAt, code = "room_binding_ambiguous"))
+            config.error = "선택한 방 여러 개가 같은 알림과 일치합니다. 방을 다시 선택해 주세요."
+            return
+        }
+        val binding = resolved.binding ?: return
+        if (binding.candidate.shortcut.isBlank() && config.hasTitleCollision(binding.candidate)) {
             db.dao().diagnostic(Diagnostic(at = observedAt, code = "room_identity_collision"))
             config.error = "같은 제목의 방이 여러 개입니다 · 대상 방을 다시 확인해 주세요"
             return
         }
-        val roomId = config.roomId
+        val roomId = binding.roomId
         val messages = parsed.messages.map { it.copy(sender = config.alias(it.sender)) }
         // Dedup snapshots contain keyed signatures, never a second copy of message text.
         val signatures = messages.map {
@@ -82,7 +87,7 @@ class RadarApp : Application() {
                 config.error = "전송 대기열 한도 초과 · 일부 알림 항목을 저장하지 못했습니다"
             }
             val saved = retained.map {
-                SavedMessage(UUID.randomUUID().toString(), roomId, binding.title, it.sender,
+                SavedMessage(UUID.randomUUID().toString(), roomId, binding.candidate.title, it.sender,
                     it.text, it.sourceTime, observedAt, urls(it.text).toString(), quality)
             }
             db.dao().insertMessages(saved)
@@ -93,7 +98,7 @@ class RadarApp : Application() {
             db.dao().diagnostic(Diagnostic(at = observedAt, code = "suppressed_entries", value = messages.size - diff.added.size))
             if (diff.ambiguous) db.dao().diagnostic(Diagnostic(at = observedAt, code = "uncertain_windows"))
         }
-        config.lastCapture = observedAt
+        config.recordCapture(roomId, observedAt)
         if (db.dao().queueCount("pending") + db.dao().queueCount("rejected") < 50000) config.error = ""
         if (syncSettings.enabled) SyncScheduler.kick(this)
     }
@@ -102,7 +107,7 @@ class RadarApp : Application() {
         prune()
         output.bufferedWriter(Charsets.UTF_8).use { writer ->
             writer.appendLine(JSONObject().put("type", "metadata").put("format_version", 1)
-                .put("app_version", "0.3.0").put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+                .put("app_version", "2.0.0").put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
                 .put("android", Build.VERSION.RELEASE).put("build", Build.DISPLAY)
                 .put("exported_at", System.currentTimeMillis()).put("retention_days", 7)
                 .put("includes_messages", includeMessages)
@@ -150,6 +155,15 @@ class RadarApp : Application() {
     }
 }
 
+data class RoomBinding(
+    val roomId: String,
+    val candidate: RoomCandidate,
+    val selectedAt: Long,
+    val lastCapture: Long = 0
+)
+
+data class RoomResolution(val binding: RoomBinding?, val ambiguous: Boolean = false)
+
 class Config(context: Context) {
     private val prefs = context.getSharedPreferences("collector", Context.MODE_PRIVATE)
     init {
@@ -157,6 +171,7 @@ class Config(context: Context) {
             val key = ByteArray(32).also { SecureRandom().nextBytes(it) }
             prefs.edit().putString("alias_key", Base64.encodeToString(key, Base64.NO_WRAP)).commit()
         }
+        migrateSingleRoom()
     }
     var enabled: Boolean
         get() = prefs.getBoolean("enabled", false)
@@ -164,19 +179,64 @@ class Config(context: Context) {
     var error: String
         get() = prefs.getString("error", "").orEmpty()
         set(value) { prefs.edit().putString("error", value).apply() }
-    var lastCapture: Long
-        get() = prefs.getLong("last_capture", 0)
-        set(value) { prefs.edit().putLong("last_capture", value).apply() }
+    val lastCapture: Long get() = bindings.maxOfOrNull { it.lastCapture } ?: prefs.getLong("last_capture", 0)
     var lastConnected: Long
         get() = prefs.getLong("last_connected", 0)
         set(value) { prefs.edit().putLong("last_connected", value).apply() }
-    val roomId: String get() = prefs.getString("room_id", "").orEmpty()
-    val binding: RoomCandidate? get() = prefs.getString("binding", null)?.let { fromJson(JSONObject(it)) }
+    val bindings: List<RoomBinding> get() = decodeBindings(prefs.getString("bindings_v2", "[]").orEmpty())
+    val roomId: String get() = bindings.firstOrNull()?.roomId.orEmpty()
+    val binding: RoomCandidate? get() = bindings.firstOrNull()?.candidate
+    val selectionVersion: Long get() = prefs.getLong("selection_version", 0)
+
+    /** Compatibility helper: add or refresh one room without removing other selections. */
+    @Synchronized
     fun select(candidate: RoomCandidate) {
-        enabled = false
-        val same = binding?.matches(candidate) == true
-        prefs.edit().putString("binding", toJson(candidate).toString())
-            .putString("room_id", if (same) roomId else UUID.randomUUID().toString()).commit()
+        replaceSelected(bindings.map { it.candidate } + candidate)
+    }
+
+    @Synchronized
+    fun replaceSelected(selected: List<RoomCandidate>) {
+        val old = bindings
+        val unique = selected.distinctBy(::stableCandidateKey)
+        if (unique.any { candidate -> old.count { it.candidate.matches(candidate) } > 1 }) {
+            enabled = false
+            error = "방 식별값이 충돌합니다. 선택을 지우고 다시 선택해 주세요."
+            return
+        }
+        val next = unique.map { candidate ->
+            val matches = old.filter { it.candidate.matches(candidate) }
+            if (matches.size == 1) matches.single().copy(candidate = candidate)
+            else RoomBinding(UUID.randomUUID().toString(), candidate, System.currentTimeMillis())
+        }
+        if (encodeBindings(old).toString() != encodeBindings(next).toString()) {
+            persistBindings(next, pause = true)
+        }
+    }
+
+    @Synchronized
+    fun remove(roomId: String) {
+        val old = bindings
+        val next = old.filterNot { it.roomId == roomId }
+        if (next.size != old.size) persistBindings(next, pause = true)
+    }
+
+    @Synchronized
+    fun resolve(candidate: RoomCandidate): RoomResolution {
+        val matches = bindings.filter { it.candidate.matches(candidate) }
+        return when (matches.size) {
+            0 -> RoomResolution(null)
+            1 -> RoomResolution(matches.single())
+            else -> RoomResolution(null, ambiguous = true)
+        }
+    }
+
+    @Synchronized
+    fun recordCapture(roomId: String, observedAt: Long) {
+        val updated = bindings.map {
+            if (it.roomId == roomId) it.copy(lastCapture = maxOf(it.lastCapture, observedAt)) else it
+        }
+        persistBindings(updated, pause = false, bumpVersion = false)
+        prefs.edit().putLong("last_capture", maxOf(prefs.getLong("last_capture", 0), observedAt)).apply()
     }
     fun discover(candidate: RoomCandidate) {
         val all = candidates().toMutableList()
@@ -195,7 +255,8 @@ class Config(context: Context) {
     fun hasTitleCollision(candidate: RoomCandidate): Boolean = candidates().any {
         it.title == candidate.title && !candidate.matches(it)
     }
-    fun clear() { prefs.edit().remove("binding").remove("room_id").remove("candidates")
+    @Synchronized
+    fun clear() { prefs.edit().remove("binding").remove("room_id").remove("bindings_v2").remove("selection_version").remove("candidates")
         .remove("last_capture").remove("error").putBoolean("enabled", false).commit() }
     fun alias(sender: String): String {
         if (sender.isEmpty()) return "unknown"
@@ -205,4 +266,50 @@ class Config(context: Context) {
     }
     private fun toJson(c: RoomCandidate) = JSONObject().put("title", c.title).put("key", c.key).put("shortcut", c.shortcut).put("tag", c.tag)
     private fun fromJson(o: JSONObject) = RoomCandidate(o.getString("title"), o.getString("key"), o.getString("shortcut"), o.optString("tag", ""))
+
+    private fun stableCandidateKey(candidate: RoomCandidate): String = if (candidate.shortcut.isNotBlank()) {
+        "shortcut:${candidate.shortcut}"
+    } else {
+        "legacy:${candidate.title}:${candidate.key}"
+    }
+
+    private fun encodeBindings(items: List<RoomBinding>) = JSONArray(items.map { binding ->
+        JSONObject().put("room_id", binding.roomId).put("candidate", toJson(binding.candidate))
+            .put("selected_at", binding.selectedAt).put("last_capture", binding.lastCapture)
+    })
+
+    private fun decodeBindings(value: String): List<RoomBinding> = runCatching {
+        val array = JSONArray(value)
+        (0 until array.length()).map { index ->
+            val item = array.getJSONObject(index)
+            RoomBinding(
+                UUID.fromString(item.getString("room_id")).toString(),
+                fromJson(item.getJSONObject("candidate")),
+                item.optLong("selected_at", 0),
+                item.optLong("last_capture", 0)
+            )
+        }.distinctBy { it.roomId }
+    }.getOrDefault(emptyList())
+
+    private fun persistBindings(items: List<RoomBinding>, pause: Boolean, bumpVersion: Boolean = true) {
+        val edit = prefs.edit().putString("bindings_v2", encodeBindings(items).toString())
+        if (pause) edit.putBoolean("enabled", false)
+        if (bumpVersion) edit.putLong("selection_version", selectionVersion + 1)
+        edit.commit()
+    }
+
+    private fun migrateSingleRoom() {
+        if (prefs.contains("bindings_v2")) return
+        val legacy = prefs.getString("binding", null)?.let {
+            runCatching { fromJson(JSONObject(it)) }.getOrNull()
+        }
+        val legacyId = prefs.getString("room_id", "").orEmpty()
+        val migrated = if (legacy != null && runCatching { UUID.fromString(legacyId) }.isSuccess) {
+            listOf(RoomBinding(legacyId, legacy, 0, prefs.getLong("last_capture", 0)))
+        } else {
+            emptyList()
+        }
+        prefs.edit().putString("bindings_v2", encodeBindings(migrated).toString())
+            .putLong("selection_version", 1).remove("binding").remove("room_id").commit()
+    }
 }

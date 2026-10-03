@@ -24,6 +24,9 @@ class SendClaim:
     owner: UUID
     attempt_id: UUID
     payload: dict
+    destination_chat_id: str | None = None
+    message_thread_id: int | None = None
+    route_version: int | None = None
 
 
 class DeliveryStore:
@@ -97,17 +100,18 @@ class DeliveryStore:
         return [row["device_id"] for row in rows]
 
     @staticmethod
-    def _topics(db, device, policy, version, now, urgent=False):
+    def _topics(db, device, policy, version, now, urgent=False, room=None):
         rows = db.execute("""SELECT s.summary_id,j.room_id,s.payload,s.created_at
             FROM analysis_summaries s JOIN analysis_jobs j USING(job_id)
             JOIN rooms r ON r.device_id=j.device_id AND r.room_id=j.room_id
             WHERE j.device_id=%s AND r.allowed AND j.status='completed' AND j.profile_version=%s
+            AND (%s::uuid IS NULL OR j.room_id=%s)
             AND s.is_candidate AND s.created_at >= %s
             AND (NOT %s OR ((s.payload->>'importance')::int >= %s AND s.created_at >= %s))
             AND NOT EXISTS(SELECT 1 FROM delivery_items i WHERE i.device_id=%s AND i.summary_id=s.summary_id)
             AND NOT EXISTS(SELECT 1 FROM summary_feedback f WHERE f.device_id=%s AND f.summary_id=s.summary_id AND f.rating='not_interested')
             ORDER BY (s.payload->>'importance')::int DESC,(s.payload->>'relevance')::int DESC,s.created_at DESC,s.summary_id LIMIT 1000""",
-                          (device, version, now - timedelta(hours=policy.max_summary_age_hours), urgent,
+                          (device, version, room, room, now - timedelta(hours=policy.max_summary_age_hours), urgent,
                            policy.urgent_importance_threshold, now - timedelta(minutes=15), device, device)).fetchall()
         recent = db.execute("""SELECT i.fingerprint FROM delivery_items i JOIN delivery_outbox o USING(delivery_id)
             WHERE i.device_id=%s AND o.created_at >= %s AND o.status IN ('pending','sending','retry_wait','accepted','uncertain')""",
@@ -133,6 +137,32 @@ class DeliveryStore:
             topic['window_through']=ends[topic['room_id']]
         return topics
 
+    @staticmethod
+    def _routes(db, device):
+        routes = db.execute("""SELECT tr.room_id,tr.chat_id,tr.message_thread_id,tr.version,
+            COALESCE(NULLIF(tr.display_name,''),NULLIF(r.display_name,''),'Kakao room') AS display_name
+            FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
+            WHERE tr.device_id=%s AND tr.enabled AND r.allowed ORDER BY tr.room_id""", (device,)).fetchall()
+        if routes:
+            return routes
+        if db.execute("SELECT 1 FROM telegram_routes WHERE device_id=%s LIMIT 1", (device,)).fetchone():
+            return []
+        rooms = db.execute("SELECT room_id,display_name FROM rooms WHERE device_id=%s AND allowed ORDER BY room_id", (device,)).fetchall()
+        # Lossless v1 migration: the sole room may continue using the environment chat.
+        return [{"room_id": rooms[0]["room_id"], "chat_id": None, "message_thread_id": None,
+                 "version": 0, "display_name": rooms[0]["display_name"]}] if len(rooms) == 1 else []
+
+    @classmethod
+    def _route_current(cls, db, device, row):
+        if row["route_version"] == 0:
+            routes = cls._routes(db, device)
+            return len(routes) == 1 and routes[0]["version"] == 0 and routes[0]["room_id"] == row["room_id"]
+        route = db.execute("""SELECT tr.chat_id,tr.message_thread_id,tr.version FROM telegram_routes tr
+            JOIN rooms r USING(device_id,room_id) WHERE tr.device_id=%s AND tr.room_id=%s
+            AND tr.enabled AND r.allowed""", (device, row["room_id"])).fetchone()
+        return bool(route and route["version"] == row["route_version"] and route["chat_id"] == row["destination_chat_id"]
+                    and route["message_thread_id"] == row["message_thread_id"])
+
     def preview(self, device):
         with self.store.connect() as db:
             self._device(db, device)
@@ -152,29 +182,49 @@ class DeliveryStore:
             scheduled = due <= now
             if not scheduled and not manual and not policy.urgent_enabled:
                 return None
-            if db.execute("SELECT 1 FROM delivery_outbox WHERE device_id=%s AND status IN ('pending','sending','retry_wait')", (device,)).fetchone():
+            if db.execute("""SELECT 1 FROM delivery_outbox WHERE device_id=%s AND room_id IS NULL
+                AND status IN ('pending','sending','retry_wait')""", (device,)).fetchone():
                 return None
-            if not scheduled and not manual and db.execute("""SELECT 1 FROM delivery_outbox WHERE device_id=%s AND kind='urgent'
-                AND created_at>=%s AND status IN ('pending','sending','retry_wait','accepted','uncertain')""",
-                    (device, now - timedelta(seconds=policy.urgent_cooldown_seconds))).fetchone():
+            routes = self._routes(db, device)
+            if not routes:
                 return None
-            topics = self._topics(db, device, policy, profile_version, now, urgent=not scheduled and not manual)
             # Downtime produces one catch-up digest, never one notification per missed slot.
             if scheduled:
                 db.execute("UPDATE delivery_settings SET next_due_at=%s WHERE device_id=%s", (next_slot(policy, now), device))
-            if not topics:
-                return None
-            delivery = uuid4()
-            payload = render_digest(topics, delivery)
-            payload['source_windows']={topic['room_id']:topic['window_through'] for topic in topics}
-            db.execute("""INSERT INTO delivery_outbox(delivery_id,device_id,settings_version,profile_version,status,payload,slot_at,not_before,kind)
-                VALUES(%s,%s,%s,%s,'pending',%s,%s,%s,%s)""",
-                       (delivery, device, version, profile_version, Jsonb(payload), due if scheduled else now,
-                        after_quiet(policy, now), 'manual' if manual else ('scheduled' if scheduled else 'urgent')))
-            for topic in topics:
-                db.execute("INSERT INTO delivery_items(delivery_id,device_id,summary_id,room_id,fingerprint) VALUES(%s,%s,%s,%s,%s)",
-                           (delivery, device, UUID(topic["summary_id"]), UUID(topic["room_id"]), topic["fingerprint"]))
-        return delivery
+            deliveries = []
+            for route in routes:
+                room = route["room_id"]
+                if not scheduled and not manual and db.execute("""SELECT 1 FROM delivery_outbox
+                    WHERE device_id=%s AND room_id=%s AND kind='urgent' AND created_at>=%s
+                    AND status IN ('pending','sending','retry_wait','accepted','uncertain')""",
+                    (device, room, now - timedelta(seconds=policy.urgent_cooldown_seconds))).fetchone():
+                    continue
+                if db.execute("""SELECT 1 FROM delivery_outbox WHERE device_id=%s AND room_id=%s
+                    AND status IN ('pending','sending','retry_wait')""", (device, room)).fetchone():
+                    continue
+                topics = self._topics(db, device, policy, profile_version, now,
+                                      urgent=not scheduled and not manual, room=room)
+                if not topics:
+                    continue
+                delivery = uuid4()
+                payload = render_digest(topics, delivery)
+                label = route["display_name"].strip()
+                if label:
+                    payload["title"] = f"{label} · {payload['title']}"
+                payload['source_windows']={topic['room_id']:topic['window_through'] for topic in topics}
+                db.execute("""INSERT INTO delivery_outbox(delivery_id,device_id,room_id,settings_version,profile_version,
+                    destination_chat_id,message_thread_id,route_version,status,payload,slot_at,not_before,kind)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s)""",
+                    (delivery, device, room, version, profile_version, route["chat_id"], route["message_thread_id"],
+                     route["version"], Jsonb(payload), due if scheduled else now, after_quiet(policy, now),
+                     'manual' if manual else ('scheduled' if scheduled else 'urgent')))
+                for topic in topics:
+                    db.execute("INSERT INTO delivery_items(delivery_id,device_id,summary_id,room_id,fingerprint) VALUES(%s,%s,%s,%s,%s)",
+                               (delivery, device, UUID(topic["summary_id"]), UUID(topic["room_id"]), topic["fingerprint"]))
+                deliveries.append(delivery)
+        if len(deliveries) == 1:
+            return deliveries[0]
+        return deliveries or None
 
     def _recover(self, db, device, now):
         rows = db.execute("""UPDATE delivery_outbox SET status='uncertain',last_error='worker_interrupted',owner_token=NULL,lease_until=NULL
@@ -195,6 +245,11 @@ class DeliveryStore:
                 FOR UPDATE""",(device,policy.enabled,profile.enabled,version,profile_version)).fetchall()
             for entry in stale:
                 self._cancel(db,entry['delivery_id'],'configuration_changed')
+            routed = db.execute("""SELECT * FROM delivery_outbox WHERE device_id=%s AND room_id IS NOT NULL
+                AND status IN ('pending','retry_wait') FOR UPDATE""", (device,)).fetchall()
+            for entry in routed:
+                if not self._route_current(db, device, entry):
+                    self._cancel(db, entry["delivery_id"], "route_changed")
             row = db.execute("""SELECT * FROM delivery_outbox WHERE device_id=%s AND status IN ('pending','retry_wait')
                 AND not_before<=%s ORDER BY created_at,delivery_id LIMIT 1 FOR UPDATE""", (device, now)).fetchone()
             if not row:
@@ -203,11 +258,14 @@ class DeliveryStore:
             if not policy.enabled or version != row["settings_version"] or not profile.enabled or profile_version != row["profile_version"]:
                 self._cancel(db, row["delivery_id"], "configuration_changed")
                 return None
+            if row["room_id"] is not None and not self._route_current(db, device, row):
+                self._cancel(db, row["delivery_id"], "route_changed")
+                return None
             live = db.execute("""SELECT i.summary_id FROM delivery_items i JOIN analysis_summaries s USING(summary_id)
                 JOIN rooms r ON r.device_id=i.device_id AND r.room_id=i.room_id
-                WHERE i.delivery_id=%s AND r.allowed AND s.created_at>=%s
+                WHERE i.delivery_id=%s AND r.allowed AND i.room_id=COALESCE(%s,i.room_id) AND s.created_at>=%s
                 AND NOT EXISTS(SELECT 1 FROM summary_feedback f WHERE f.device_id=i.device_id AND f.summary_id=i.summary_id AND f.rating='not_interested')
-                FOR SHARE OF s,r""", (row["delivery_id"], now - timedelta(hours=policy.max_summary_age_hours))).fetchall()
+                FOR SHARE OF s,r""", (row["delivery_id"], row["room_id"], now - timedelta(hours=policy.max_summary_age_hours))).fetchall()
             if len(live) != len(row["payload"].get("topics", [])) or not live:
                 self._cancel(db, row["delivery_id"], "source_unavailable")
                 return None
@@ -233,7 +291,8 @@ class DeliveryStore:
             if policy.include_source_quotes:
                 from .source_quotes import attach_quotes
                 attach_quotes(db,device,outgoing)
-        return SendClaim(row["delivery_id"], device, owner, attempt, outgoing)
+        return SendClaim(row["delivery_id"], device, owner, attempt, outgoing,
+                         row["destination_chat_id"], row["message_thread_id"], row["route_version"])
 
     def finish(self, claim, outcome, code=None, message_id=None, retry_after=0):
         if outcome not in ("accepted", "retry", "failed", "uncertain"):
@@ -282,14 +341,17 @@ class DeliveryStore:
                 profile_version, profile = AnalysisStore._profile(db, device)
                 if not policy.enabled or not profile.enabled or version != row["settings_version"] or profile_version != row["profile_version"] or row["attempts"] >= policy.max_attempts:
                     raise DeliveryConflict()
-                if db.execute("SELECT 1 FROM delivery_outbox WHERE device_id=%s AND status IN ('pending','sending','retry_wait')", (device,)).fetchone():
+                if db.execute("""SELECT 1 FROM delivery_outbox WHERE device_id=%s
+                    AND status IN ('pending','sending','retry_wait')
+                    AND (%s::uuid IS NULL OR room_id=%s)""", (device, row["room_id"], row["room_id"])).fetchone():
                     raise DeliveryConflict()
                 db.execute("UPDATE delivery_outbox SET status='retry_wait',not_before=%s,last_error='manual_retry' WHERE delivery_id=%s", (after_quiet(policy, now), delivery))
         return {"delivery_id": str(delivery), "status": "accepted" if resolution.action == "mark_accepted" else "retry_wait"}
 
     def history(self, device, limit=20, offset=0):
         with self.store.connect() as db:
-            return db.execute("""SELECT delivery_id,status,attempts,last_error,slot_at,not_before,created_at,accepted_at,
+            return db.execute("""SELECT delivery_id,room_id,destination_chat_id,message_thread_id,route_version,
+                status,attempts,last_error,slot_at,not_before,created_at,accepted_at,
                 provider_message_id,jsonb_array_length(COALESCE(payload->'topics','[]'::jsonb)) AS topic_count
                 FROM delivery_outbox WHERE device_id=%s ORDER BY created_at DESC,delivery_id LIMIT %s OFFSET %s""", (device, limit, offset)).fetchall()
 

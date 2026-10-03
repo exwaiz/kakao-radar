@@ -72,9 +72,9 @@ class TelegramChannel:
     def __init__(self, token, chat_id, links=None, transport=None):
         if not re.fullmatch(r"[0-9]{5,20}:[A-Za-z0-9_-]{20,100}", token or ""):
             raise ChannelConfigurationError("A Telegram bot token is required")
-        if not re.fullmatch(r"-?[0-9]{1,20}", str(chat_id or "")):
+        if chat_id not in (None, "") and not re.fullmatch(r"-?[0-9]{1,20}", str(chat_id)):
             raise ChannelConfigurationError("A numeric Telegram chat ID is required")
-        self.token, self.chat_id = token, str(chat_id)
+        self.token, self.chat_id = token, str(chat_id) if chat_id not in (None, "") else None
         self.links, self.transport = links or DigestLinks(), transport
 
     @classmethod
@@ -86,8 +86,14 @@ class TelegramChannel:
     def publish(self, claim):
         # Explicit UTF-16 entities style our own text; source HTML/Markdown is never parsed.
         text,entities=format_message(claim.payload)
-        body = {"chat_id": self.chat_id, "text": text, 'entities':entities,
+        chat_id = getattr(claim, "destination_chat_id", None) or self.chat_id
+        thread_id = getattr(claim, "message_thread_id", None)
+        if chat_id is None:
+            return ChannelResult("failed", "channel_rejected")
+        body = {"chat_id": chat_id, "text": text, 'entities':entities,
                 "link_preview_options": {"is_disabled": True}}
+        if thread_id is not None:
+            body["message_thread_id"] = thread_id
         link = self.links.url(claim.delivery_id)
         if link:
             body["reply_markup"] = {"inline_keyboard": [[{"text": "요약·근거·피드백", "url": link}]]}
@@ -115,7 +121,9 @@ class TelegramChannel:
             message = result.get("message_id")
             if status != 200 or data.get("ok") is not True or type(message) is not int or message < 1:
                 return ChannelResult("uncertain", "invalid_response")
-            if str(result.get("chat", {}).get("id")) != self.chat_id:
+            if str(result.get("chat", {}).get("id")) != chat_id:
+                return ChannelResult("uncertain", "invalid_response")
+            if thread_id is not None and result.get("message_thread_id") != thread_id:
                 return ChannelResult("uncertain", "invalid_response")
             return ChannelResult("accepted", message_id=str(message))
         except (httpx.ConnectError, httpx.ConnectTimeout):

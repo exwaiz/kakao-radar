@@ -21,7 +21,7 @@ class CollectorService : NotificationListenerService() {
         val at = System.currentTimeMillis()
         // Freeze the capture decision at arrival, and recheck on the serial store thread.
         val enabledAtArrival = app.config.enabled
-        val roomAtArrival = app.config.roomId
+        val selectionAtArrival = app.config.selectionVersion
         app.io.execute {
             try {
                 val dao = app.db.dao()
@@ -33,7 +33,9 @@ class CollectorService : NotificationListenerService() {
                         dao.diagnostic(Diagnostic(at = at, code = if (capture) "parsed_callbacks" else "parsed_snapshots"))
                         dao.diagnostic(Diagnostic(at = at, code = "method_${result.notification.method}"))
                         app.config.discover(result.notification.room)
-                        if (capture && enabledAtArrival && roomAtArrival == app.config.roomId) app.capture(result.notification, at)
+                        if (capture && enabledAtArrival && selectionAtArrival == app.config.selectionVersion) {
+                            app.capture(result.notification, at)
+                        }
                     }
                 }
                 runCatching {

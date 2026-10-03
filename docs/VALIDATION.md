@@ -1,5 +1,46 @@
 # 검증 결과
 
+## schema 7 / 기존 봇 1개·방별 말풍선 — 2026-09-27
+
+- 일반 개인 Telegram chat 하나를 room 4개가 공유하되 각 room이 별도 outbox와 별도 라벨 payload를 만드는 PostgreSQL 통합 테스트를 추가했다. forum topic 중복 금지는 유지한다.
+- 전체 서버 회귀 **191 passed / 0 failed**, 합성 M3/M4 데모 성공, 외부 네트워크 호출 0건.
+- 운영 schema 6→7, route 4개/고유 chat 1개/thread NULL 4개, 일일 quota 4, 다음 일정 2026-09-28 23:00 KST를 확인했다.
+- Redmi pending 4,233건을 4개 room round-robin으로 실제 업로드해 pending 0, WSL messages 5,321건이 됐다. 방별 저장은 A 2,459 / B 41 / C 2,709 / D 112건이었다.
+- 실제 Telegram API에서 room별 말풍선 4개가 모두 accepted(message IDs 37–40). 각 outbox topic 집합은 하나의 room에만 속한다. 사용자가 Telegram 모바일 캡처와 수신 피드백으로 4개 독립 말풍선 및 `카카오방 A/D` 라벨 표시를 확인했다.
+
+
+## v2.0.0 Redmi 4개 방 선택·WSL 등록 — 2026-09-22
+
+- 사용자 승인으로 Redmi에서 발견된 서로 다른 shortcut 대화 ID 4개를 모두 선택했다. 기존 room UUID를 보존하고 신규 UUID 3개를 생성했으며 `selection_version=2`를 확인했다.
+- 잠금 화면의 ADB input 제한을 우회하지 않고 명시적 action이 필요한 계측 테스트로 선택·재개했다. 테스트 APK는 설치된 운영 APK와 같은 기존 debug keystore로 서명했으며 운영 앱과 기존 1,688건 DB는 삭제·재설치하지 않았다.
+- WSL schema 6 allowlist에 같은 기기/token으로 room 4개를 provision했다. 방별 메시지는 `[1688, 0, 0, 0]`, 분석 job은 `[266, 0, 0, 0]`으로 기존 데이터가 새 room에 복제되지 않았음을 확인했다.
+- Redmi 최종 상태는 selected rooms 4, capture/sync enabled, upload pending 0이다. WSL API/analysis/delivery 서비스는 active다.
+- Telegram route는 0개이고 다중 room의 fallback route 계산도 0개이므로 forum route 설정 전 자동 발송은 보류된다.
+- 아직 미검증: 신규 3개 방의 실제 알림 저장·업로드, 방별 round-robin 실측, forum topic 수신, 화면 OFF 장시간·야간 수집.
+
+## v2.0.0 WSL 운영 이관 — 2026-09-22
+
+- 운영 DB schema 5와 기존 서버 소스를 checksum이 있는 WSL private backup으로 보존한 뒤 v2 서버를 배포하고 schema 6을 적용했다. device 1, room 1, messages/receipts 1,008, accepted outbox 28건이 유지됐고 active/uncertain outbox는 0이었다.
+- WSL 격리 PostgreSQL 16에서 서버 테스트 **189 passed / 0 failed / 0 skipped**, 기존 dependency warning 2건. 합성 M3/M4 데모 성공, 외부 네트워크 호출 0건. Linux 비권한 계정의 격리 DB socket을 `.state` 아래에 두도록 테스트 실행기를 보완했다.
+- 운영 서비스 5개 active, health `2.0.0`, schema 6, USB reverse와 listener bound를 확인했다. room 없는 legacy outbox 1건은 이미 accepted인 `service_update`이며 신규 route는 아직 0개다.
+- 개인정보 안전 `DeviceLiveSyncTest`로 기존 단일 방 backlog 680건을 실제 v2 HTTPS 경로에 전송했다. 7개 batch가 모두 `SENT`, Redmi pending 0, WSL messages/receipts 1,688/1,688이다.
+- 미검증: 추가 실방 선택/provision, N방별 저장·공정 upload, Telegram forum topic route와 실제 수신, 화면 OFF 장시간·야간 수집률.
+
+## v2.0.0 Redmi 업데이트·migration — 2026-09-22
+
+- 기존 0.3.1 데이터 보존 설치에서 동일 debug keystore로 다시 빌드한 2.0.0 APK를 `adb install -r`로 설치했다. 설치 후 versionCode 6 / versionName 2.0.0, 기존 최초 설치 시각 유지, MainActivity cold start 성공을 확인했다.
+- 업데이트 전/후 개인정보 안전 계측 진단으로 Room schema 3과 기존 메시지·upload 상태 보존을 확인했다. legacy 단일 방 UUID는 새 `bindings_v2`의 유일한 항목과 기존 sync room UUID에 정확히 일치했고, legacy `binding`/`room_id` 키는 제거됐으며 `selection_version=1`이었다. 실제 출발 APK는 0.3.1이므로 동일 preference 형식을 쓰는 1.0.0의 정확한 설치→업데이트 절차까지 검증한 것으로 표현하지 않는다.
+- Android JVM/Robolectric 45건은 실패/오류/skip 0, `assembleDebug`와 개인정보 안전 `assembleDebugAndroidTest`가 성공했다. 설치 APK는 6,320,661 bytes, SHA-256 `f3039d7b0ff7d27ea5b5ae2feb8d34db4581c66f6585ff5fae5dd76b40022d83`이다.
+- 실제 단말 계측 `DeviceDiagnosticsTest` 1건이 통과했고, 종료 후 앱 재시작과 notification listener bound 상태를 확인했다.
+- 추가 KakaoTalk 방 선택은 개인정보 수집 범위를 넓히므로 사용자의 대상 방 지정 전에는 수행하지 않았다. 실제 N방 알림의 방별 저장, 화면 OFF 장시간, 야간 6~8시간 수집은 미검증이다.
+
+## v2.0.0 다중 방 구현 — 2026-09-21
+
+- Android versionCode 6 / versionName 2.0.0. 기존 단일 `binding`/`room_id` preference를 동일 ID의 `RoomBinding` 집합으로 승격하며, 두 합성 방의 메시지·snapshot·대기열 통계를 독립 유지하는 Robolectric 테스트를 추가했다.
+- Android `testDebugUnitTest` 45건 통과(실패/오류 0), `assembleDebug`, `lintDebug` 성공. 생성된 `app-debug.apk`는 6,523,394 bytes, SHA-256 `4791c90125937a6b431a637b23427d46a6ac348d2f2feb5c26b644f3f07f4494`다. APK를 실제 폰에 설치하지 않았다.
+- 서버 schema 6에 방 표시명, Telegram route, 방·chat·thread·route version outbox snapshot을 추가했다. 전체 합성 PostgreSQL/Mock HTTP 회귀 189건 통과(실패 0, 기존 dependency deprecation warning 2건). 다중 방 별도 outbox, route 충돌/버전 충돌, route 변경 전송 취소, route 없는 다중 방의 안전 정지와 일정 보존, Telegram `message_thread_id` 요청·응답 일치를 포함한다. 데모의 외부 네트워크 호출은 0건이다.
+- 실제 Redmi 설치, 실제 KakaoTalk N개 방 알림, 기존 WSL 운영 DB schema 6 적용, 실제 Telegram forum topic 수신은 아직 실행하지 않았다. 합성 테스트 통과를 이 항목들의 성공으로 해석하지 않는다.
+
 ## v1.0.0 / master 통합 — 2026-09-18 (최신)
 
 - 전용 합성 PostgreSQL `radar_integration_test`: **183 passed / 0 skipped / 0 failed**, 24.41초, 기존 deprecation 경고 2개. 운영 DB·실제 대화·유료 OpenAI 호출은 회귀 테스트에 사용하지 않았다.
@@ -125,3 +166,11 @@ assembleDebug, testDebugUnitTest(33개), lintDebug(오류 0/경고 11), assemble
 원문 복사 없는 단말 진단: 테스트 APK 설치 후 `adb shell am instrument -w -e class dev.kakaoradar.collector.DeviceDiagnosticsTest dev.kakaoradar.collector.test/androidx.test.runner.AndroidJUnitRunner`. 실제 DB를 삭제하지 않으며 집계와 HMAC 식별자만 출력한다.
 
 최종 APK 서명 검증 통과, INTERNET 권한 없음. 설치된 versionCode=2 / versionName=0.2.0, MainActivity `Status: ok`. APK SHA-256: `5ab0620e1d83c8a0b7cf09bbbfd29df8bf71e2e2c5f497c812eba770dc133626`.
+
+## 2026-09-22 WSL 수동 Telegram 시험
+
+- 운영 WSL의 새 후보 5개를 수동 digest 1건으로 계획하고 Telegram API `accepted`를 확인했다.
+- DB outbox는 `manual/accepted`, topic 5개로 확정됐고 delivery progress가 반영됐다.
+- 정규 23:00 설정은 변경하지 않았지만 오늘 quota 1/1을 사용했으므로 오늘 23:00 추가 발송은 없다.
+- 이 결과는 단일 허용 방의 기존 개인 채팅 fallback 검증이다. v2 다중 방 forum topic routing과 사용자 단말 표시·열람은 검증하지 않았다.
+- 사용자가 Telegram 실제 수신을 확인했다. 후속 비식별 진단에서 Redmi는 발견 대화 ID 4개 중 1개 binding만 선택돼 있었고, WSL의 1,688건 및 발송 topic 5개도 모두 같은 room ID였다. 방별 forum routing 검증으로 승격하지 않는다.

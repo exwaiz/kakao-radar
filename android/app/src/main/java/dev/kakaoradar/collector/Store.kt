@@ -27,6 +27,7 @@ data class Diagnostic(@PrimaryKey(autoGenerate = true) val id: Long = 0, val at:
 @Entity(tableName = "notification_structures")
 data class NotificationStructure(@PrimaryKey(autoGenerate = true) val id: Long = 0, val at: Long, val source: String, val payload: String)
 data class ReasonTotal(val code: String, val total: Int)
+data class RoomLocalStatus(val roomId: String, val stored: Int, val pending: Int, val sent: Int, val rejected: Int)
 
 @Entity(tableName = "upload_queue", foreignKeys = [ForeignKey(entity = SavedMessage::class,
     parentColumns = ["eventId"], childColumns = ["eventId"], onDelete = ForeignKey.CASCADE)],
@@ -55,6 +56,12 @@ interface RadarDao {
     @Query("SELECT code, SUM(value) AS total FROM diagnostics WHERE code LIKE 'unsupported_%' AND code != 'unsupported_kakao_callbacks' GROUP BY code ORDER BY total DESC") fun reasons(): List<ReasonTotal>
     @Query("SELECT * FROM snapshots WHERE roomId = :roomId") fun snapshot(roomId: String): Snapshot?
     @Query("SELECT COUNT(*) FROM messages") fun count(): Int
+    @Query("""SELECT m.roomId AS roomId, COUNT(*) AS stored,
+        COALESCE(SUM(CASE WHEN q.state='pending' THEN 1 ELSE 0 END),0) AS pending,
+        COALESCE(SUM(CASE WHEN q.state='sent' THEN 1 ELSE 0 END),0) AS sent,
+        COALESCE(SUM(CASE WHEN q.state='rejected' THEN 1 ELSE 0 END),0) AS rejected
+        FROM messages m LEFT JOIN upload_queue q ON m.eventId=q.eventId GROUP BY m.roomId""")
+    fun roomStatus(): List<RoomLocalStatus>
     @Query("SELECT * FROM messages ORDER BY observedAt DESC LIMIT 12") fun recent(): List<SavedMessage>
     @Query("SELECT * FROM messages WHERE observedAt > :after OR (observedAt = :after AND eventId > :afterId) ORDER BY observedAt, eventId LIMIT 500")
     fun page(after: Long, afterId: String): List<SavedMessage>

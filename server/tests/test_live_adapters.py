@@ -131,6 +131,31 @@ def test_telegram_plain_text_and_scoped_link():
     assert result.outcome == 'accepted' and result.message_id == '42'
 
 
+def test_telegram_claim_routes_to_its_snapshotted_forum_topic():
+    routed = claim()
+    routed.destination_chat_id = '-1009876543210'
+    routed.message_thread_id = 77
+    def respond(request):
+        data = json.loads(request.content)
+        assert data['chat_id'] == routed.destination_chat_id
+        assert data['message_thread_id'] == routed.message_thread_id
+        return httpx.Response(200, json={'ok':True,'result':{
+            'message_id':43,'message_thread_id':77,'chat':{'id':-1009876543210}}})
+    channel = TelegramChannel(TOKEN, CHAT, transport=httpx.MockTransport(respond))
+    assert channel.publish(routed).outcome == 'accepted'
+
+
+def test_telegram_rejects_response_from_wrong_forum_topic():
+    routed = claim()
+    routed.destination_chat_id = '-1009876543210'
+    routed.message_thread_id = 77
+    response = {'ok':True,'result':{'message_id':43,'message_thread_id':78,
+                                    'chat':{'id':-1009876543210}}}
+    result = TelegramChannel(TOKEN, CHAT, transport=httpx.MockTransport(
+        lambda _: httpx.Response(200,json=response))).publish(routed)
+    assert (result.outcome,result.code) == ('uncertain','invalid_response')
+
+
 def test_telegram_includes_corrections_beyond_first_point():
     item=claim()
     item.payload['topics']=[{'payload':{'title':'합성 일정 변경','points':[{'text':'처음 월요일이라고 공유됨'},{'text':'이후 화요일로 정정됨'}],'uncertainty':'conflicting_messages'}}]

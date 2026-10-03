@@ -24,8 +24,8 @@ class SyncDeviceTest {
         val token="fixture-token-"+UUID.randomUUID().toString()
         try {
             assertFalse(settings.enabled)
-            val device=UUID.randomUUID().toString(); val room=UUID.randomUUID().toString()
-            settings.configure("https://example.com",device,room,token)
+            val device=UUID.randomUUID().toString()
+            settings.configure("https://example.com",device,token)
             val snapshot=settings.snapshot()!!
             assertEquals(token,snapshot.token)
             assertEquals(token,SyncSettings(context,name,alias).snapshot()!!.token)
@@ -59,21 +59,21 @@ class SyncDeviceTest {
             val other=first.copy(eventId=UUID.randomUUID().toString(),roomId=UUID.randomUUID().toString(),text="must-not-upload-fixture")
             val items=listOf(first,second,other)
             db.runInTransaction { db.dao().insertMessages(items); db.dao().enqueue(items.map { UploadEntry(it.eventId,updatedAt=now) }) }
-            val target=SyncTarget(server,device,room,token,"fixture")
+            val target=SyncTarget(server,device,token,"fixture")
             val https=HttpsUploadTransport(tls.socketFactory)
             val lost=SyncEngine(db,UploadTransport { t,payload ->
                 assertFalse(payload.contains("must-not-upload-fixture"))
                 assertEquals(200,https.post(t,payload).statusCode)
                 throw IOException("simulated response loss after server commit")
             })
-            assertEquals(SyncOutcome.RETRY,lost.sync(target))
+            assertEquals(SyncOutcome.RETRY,lost.sync(target,room))
             db.close(); db=open()
             assertEquals(3,db.dao().queueCount("pending"))
-            assertEquals(SyncOutcome.SENT,SyncEngine(db,https).sync(target))
+            assertEquals(SyncOutcome.SENT,SyncEngine(db,https).sync(target,room))
             assertEquals(2,db.dao().queueCount("sent"))
             assertEquals(2,db.dao().total("upload_duplicate"))
             assertEquals("pending",db.dao().uploadEntry(other.eventId)!!.state)
-            assertEquals(SyncOutcome.IDLE,SyncEngine(db,https).sync(target))
+            assertEquals(SyncOutcome.IDLE,SyncEngine(db,https).sync(target,room))
         } finally { db.close(); context.deleteDatabase(name) }
     }
 }

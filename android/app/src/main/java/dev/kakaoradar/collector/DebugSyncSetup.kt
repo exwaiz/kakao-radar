@@ -13,8 +13,10 @@ fun RadarApp.consumeDebugSyncSetup() {
         try {
             require(file.length() in 1..4096)
             val data = JSONObject(file.readText())
-            require(config.binding != null && config.roomId.isNotBlank() && data.getString("room") == config.roomId)
-            syncSettings.configure(data.getString("server"), data.getString("device"), config.roomId, data.getString("token"), data.optString("ca_pem", ""))
+            require(config.bindings.isNotEmpty())
+            val legacyRoom = data.optString("room", "")
+            require(legacyRoom.isBlank() || config.bindings.any { it.roomId == legacyRoom })
+            syncSettings.configure(data.getString("server"), data.getString("device"), data.getString("token"), data.optString("ca_pem", ""))
             SyncScheduler.schedule(this)
             SyncScheduler.kick(this)
         } catch (_: Exception) {
