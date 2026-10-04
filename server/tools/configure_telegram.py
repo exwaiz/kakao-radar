@@ -37,7 +37,7 @@ def main():
             if self.path != '/': return self.send(404, 'Not found')
             self.send(200, f'''<!doctype html><html lang="ko"><meta charset="utf-8"><title>Telegram 봇 연결</title>
 <style>body{{font:17px system-ui;max-width:620px;margin:70px auto;padding:25px;background:#f2f6f8;color:#172b36}}form{{background:white;padding:25px;border-radius:16px}}label{{display:block;margin:20px 0 8px}}input{{box-sizing:border-box;width:100%;padding:12px;font:inherit}}button{{margin-top:25px;padding:12px 20px;font:inherit;background:#1686bd;color:white;border:0;border-radius:8px}}</style>
-<h1>Telegram 봇 연결</h1><p>기존 봇의 토큰과 본인 개인 채팅 ID를 입력하세요. 토큰은 이 노트북에만 저장하며 채팅이나 GitHub에 표시하지 않습니다.</p>
+<h1>Telegram 봇 연결</h1><p>기존 봇의 토큰과 본인 개인 채팅 ID를 입력하세요. 토큰은 이 Raspberry Pi에만 저장하며 채팅이나 GitHub에 표시하지 않습니다.</p>
 <form method="post" action="/save"><input type="hidden" name="nonce" value="{nonce}">
 <label for="token">BotFather에서 받은 봇 토큰</label><input id="token" name="token" type="password" autocomplete="off" required>
 <label for="chat">본인 개인 chat ID</label><input id="chat" name="chat" inputmode="numeric" autocomplete="off" required pattern="[0-9]+">

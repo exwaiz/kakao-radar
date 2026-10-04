@@ -1,0 +1,13 @@
+[Unit]
+Description=Wake KakaoTalk before a scheduled Kakao Radar delivery
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=kakaoradar
+Group=kakaoradar
+EnvironmentFile=/etc/default/kakao-radar-adb
+EnvironmentFile=/var/lib/kakao-radar/.state/runtime.env
+Environment=ADB_SERVER_SOCKET=tcp:127.0.0.1:5037
+ExecStart=/bin/sh -c 'cd "$RADAR_PROJECT_ROOT/server" && exec "$RADAR_PYTHON" tools/wake_kakao_before_delivery.py'
+TimeoutStartSec=45

@@ -5,8 +5,9 @@ from pathlib import Path
 import sys
 from uuid import UUID
 from zoneinfo import ZoneInfo
-root=Path('/mnt/c/Users/exwai/Documents/Codex/2026-09-16/new-chat')
-server=root/'outputs/kakao-radar-wsl/server'
+from pi_paths import DATABASE_URL, SERVER_ROOT, STATE_ROOT
+root=Path(__file__).resolve().parents[2]
+server=SERVER_ROOT
 sys.path.insert(0,str(server))
 from radar_server.store import Store
 from radar_server.delivery_store import DeliveryStore
@@ -17,8 +18,8 @@ parser.add_argument('--max-topics',type=int,choices=range(1,11),default=3)
 parser.add_argument('--preserve-daily-limit',action='store_true',help='Keep a higher existing quota when changing the test interval mid-day')
 args=parser.parse_args()
 interval=args.interval_minutes
-store=Store('postgresql:///radar?user=kakaoradar&host=/var/run/postgresql')
-device=UUID(json.loads((server/'.state/device.json').read_text())['device'])
+store=Store(DATABASE_URL)
+device=UUID(json.loads((STATE_ROOT/'device.json').read_text())['device'])
 delivery=DeliveryStore(store)
 current=delivery.policy(device)
 zone=ZoneInfo('Asia/Seoul')
