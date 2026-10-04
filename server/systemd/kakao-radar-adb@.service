@@ -1,0 +1,17 @@
+[Unit]
+Description=Kakao Radar authorized Wi-Fi ADB server for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+RemainAfterExit=yes
+EnvironmentFile=/etc/default/kakao-radar-adb
+ExecStart=/usr/bin/adb start-server
+ExecStartPost=/bin/sh -c 'test -n "$RADAR_ANDROID_SERIAL" && /usr/bin/adb connect "$RADAR_ANDROID_SERIAL" >/dev/null 2>&1 || true'
+ExecStop=/bin/sh -c 'test -n "$RADAR_ANDROID_SERIAL" && /usr/bin/adb disconnect "$RADAR_ANDROID_SERIAL" || true'
+ExecStopPost=/usr/bin/adb kill-server
+
+[Install]
+WantedBy=multi-user.target

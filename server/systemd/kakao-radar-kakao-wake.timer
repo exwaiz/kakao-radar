@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for a scheduled Kakao Radar delivery one minute ahead
+
+[Timer]
+OnCalendar=*-*-* *:55:00 Asia/Seoul
+AccuracySec=1s
+Persistent=false
+Unit=kakao-radar-kakao-wake.service
+
+[Install]
+WantedBy=timers.target

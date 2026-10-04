@@ -8,7 +8,7 @@ Redmi Note 14 5G / Android 15에서 여러 KakaoTalk 방의 알림을 독립적�
 
 방별 전달 진도와 원문 ID·내용 receipt로 새 대화 구간만 이어서 보고한다. 같은 원문 재노출 및 과거 후보 회귀를 억제하고 Telegram 제목·핵심 요점 bold, emoji, 실제 대사와 수집 시각을 표시한다. 프로필 버전, 문장별 근거, 작업 복구, 비용 예약·정산과 피드백을 지원한다.
 
-실제 선택 방 업로드, OpenAI 분석 및 사용자 보고를 통한 Telegram 수신을 확인했다. 수집률·재부팅/야간 지속성·사용자 50주제 품질 평가·본폰 표시 지연 실측은 별도로 남는다. 현재 WSL과 노트북을 실행하고 USB reverse를 유지해야 한다.
+실제 선택 방 업로드, OpenAI 분석 및 사용자 보고를 통한 Telegram 수신을 확인했다. 수집률·재부팅/야간 지속성·사용자 50주제 품질 평가·본폰 표시 지연 실측은 별도로 남는다. 현재 서버 설치는 Raspberry Pi용 [Pi 운영 안내](docs/PI_RUNTIME.md)를 따른다.
 
 [2.0 릴리스 범위](docs/RELEASE_2_0.md) · [2.0 전환 절차](docs/V2_MULTI_ROOM_RUNBOOK.md) · [WSL 운영 안내](docs/WSL_RUNTIME.md) · [검증 기록](docs/VALIDATION.md) · [M3 분석](docs/M3_ANALYSIS.md) · [M5 지연 측정](docs/M5_LATENCY.md)
 
@@ -33,6 +33,8 @@ Redmi Note 14 5G / Android 15에서 여러 KakaoTalk 방의 알림을 독립적�
 - 7일 보관 정리. 앱 시작·화면 갱신·알림 처리 시 수행하며 앱이 강제 종료된 동안 정시 삭제를 보장하지 않는다.
 
 ## 설치와 첫 실행
+
+Raspberry Pi 4 / Raspberry Pi OS 또는 Debian 13 설치는 [Pi 운영 안내](docs/PI_RUNTIME.md)를 따른다. 이 경로는 Pi의 loopback API와 Android USB ADB reverse를 사용한다.
 
 1. 제공된 `kakao-radar-2.0.0-debug.apk`를 서브폰으로 옮겨 설치한다. 개인 테스트용 debug 서명 APK다.
 2. 앱에서 **알림 접근 설정 열기**를 눌러 ‘카톡 레이더’의 접근을 허용한다.
