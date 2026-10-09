@@ -38,7 +38,7 @@ Raspberry Pi 4 / Raspberry Pi OS 또는 Debian 13 설치는 [Pi 운영 안내](d
 
 ## Telegram에서 방 이름 설정
 
-forum topic에서는 `/name 새 이름`을 보낸다. 기존처럼 여러 Kakao 방이 개인 봇 채팅 하나를 공유하면 `/rooms`로 방코드를 확인하고 `/name 방코드 새 이름`을 보낸다. `/name`만 보내도 단일 route에서는 현재 이름, 공유 채팅에서는 방 목록을 표시한다. `/help`는 사용법을 보여준다. 명령은 `RADAR_TELEGRAM_ADMIN_USER_ID`와 일치하는 사용자만 실행할 수 있다. 기존 개인 채팅의 양수 `RADAR_TELEGRAM_CHAT_ID`가 사용자 ID라면 이를 기본 관리자 ID로 재사용한다.
+forum topic에서는 `/name 새 이름`을 보낸다. 기존처럼 여러 Kakao 방이 개인 봇 채팅 하나를 공유하면 `/rooms`로 방코드를 확인하고 `/name 방코드 새 이름`을 보낸다. 방별 정기 요약 간격은 개인 채팅에서 `/interval 방코드 5h`, forum topic에서 `/interval 5h`로 1~24시간 사이에 지정한다. `/rooms`에는 각 방의 현재 간격이 표시된다. 간격은 마지막으로 수락되거나 결과가 불확실한 정기·수동 발송 슬롯부터 계산하며, 수동 발송과 긴급 발송은 이 제한을 받지 않는다. 기존 방의 기본값은 1시간이다. `/help`는 사용법을 보여준다. 명령은 `RADAR_TELEGRAM_ADMIN_USER_ID`와 일치하는 사용자만 실행할 수 있다. 기존 개인 채팅의 양수 `RADAR_TELEGRAM_CHAT_ID`가 사용자 ID라면 이를 기본 관리자 ID로 재사용한다.
 
 서버는 topic의 단일 route 또는 공유 개인 채팅 안의 고유한 방코드가 확인될 때만 이름을 바꾼다. 변경은 Kakao 방과 Telegram route에 함께 저장되며, 해당 방의 아직 시작하지 않은 발송만 취소해 새 이름으로 다시 계획한다. 봇 토큰이나 받은 명령문은 DB에 저장하지 않고 Telegram update cursor만 보관한다. 자세한 순서는 [2.0 전환 절차](docs/V2_MULTI_ROOM_RUNBOOK.md)를 따른다.
 

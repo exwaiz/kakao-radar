@@ -39,6 +39,7 @@
 - schema 7에 Telegram long-poll cursor를 추가했다. 저장 값은 숫자 bot ID와 다음 update ID뿐이며 bot token·수신 명령문·사용자 ID를 새 테이블에 복제하지 않는다.
 - 관리자 user ID 일치, bot username suffix, topic의 `/name` 조회·변경, 공유 private chat의 `/rooms` 및 `/name 방코드 새 이름`, 비인가 사용자 무응답, cursor 단조 증가를 Mock Telegram API로 검증했다.
 - PostgreSQL 통합 테스트에서 `rooms`와 `telegram_routes` 이름의 원자적 갱신, route version 증가, 같은 이름의 멱등 처리, 해당 방 pending outbox만 취소, 다른 방 보존, 이후 digest 제목의 새 이름 표시를 검증했다.
+- 2026-10-09 schema 8 방별 간격 회귀: `/interval`의 관리자·형식·방코드 확인, 한 방만 5시간 대기하고 다른 방은 정기 발송 지속, 같은 값 멱등 처리와 변경된 방의 미발송 outbox 취소를 합성 Telegram 및 PostgreSQL 테스트로 검증했다. 전체 서버 테스트 211건 통과. Pi 운영 DB는 백업 후 schema 8로 이관했고 활성 route 4개 모두 기존 1시간으로 유지했으며 delivery/command 서비스 active를 확인했다. 실제 Telegram 명령 수신은 사용자 명령 전 미검증이다.
 - 전용 `radar_integration_test` 전체 서버 회귀 **196 passed / 0 skipped / 0 failed**, 39.07초, dependency/cache warning 3건. Windows의 이전 DB 없는 회귀는 **108 passed / 91 skipped / 0 failed**였다.
 - 운영 WSL schema 7 적용, private chat의 중복 NULL-thread route 4개 보존, command systemd 서비스 활성 상태, 기존 Telegram update cursor 처리를 확인했다. Telegram API 송신은 성공했지만 사용자의 본폰 화면 표시 확인은 별도다.
 

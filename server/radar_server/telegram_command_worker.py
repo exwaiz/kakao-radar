@@ -13,7 +13,8 @@ from .store import RouteDestinationAmbiguous, Store, normalize_display_name
 
 
 TOKEN_PATTERN = re.compile(r"[0-9]{5,20}:[A-Za-z0-9_-]{20,100}")
-COMMAND_PATTERN = re.compile(r"^/(name|rooms|help|start)(?:@([A-Za-z0-9_]{5,32}))?(?:\s+([\s\S]*))?$")
+COMMAND_PATTERN = re.compile(r"^/(name|rooms|interval|help|start)(?:@([A-Za-z0-9_]{5,32}))?(?:\s+([\s\S]*))?$")
+INTERVAL_PATTERN = re.compile(r"^([1-9][0-9]?)(?:h|시간)?$", re.IGNORECASE)
 
 
 class TelegramCommandError(Exception):
@@ -119,9 +120,45 @@ class TelegramCommandWorker:
         lines = ["연결된 Kakao 방:"]
         for route in routes:
             key = str(route["room_id"])[:8]
-            lines.append(f"• {key}  {route['display_name'] or '(이름 없음)'}")
-        lines += ["", "변경: /name 방코드 새 이름"]
+            lines.append(f"• {key}  {route['display_name'] or '(이름 없음)'} · {route.get('interval_hours', 1)}시간")
+        lines += ["", "이름: /name 방코드 새 이름", "발송 간격: /interval 방코드 5h"]
         return "\n".join(lines)
+
+    def _interval(self, chat_id, thread_id, argument, routes):
+        if not argument:
+            if len(routes) == 1:
+                route = routes[0]
+                self._send(chat_id, thread_id,
+                           f"현재 발송 간격: {route['interval_hours']}시간\n변경: /interval 5h")
+                return "interval_shown"
+            self._send(chat_id, thread_id, self._room_list(routes))
+            return "rooms"
+        parts = argument.split()
+        if len(routes) == 1 and len(parts) == 1:
+            room_key, value = None, parts[0]
+        elif len(parts) == 2:
+            room_key, value = parts
+        else:
+            self._send(chat_id, thread_id, "사용법: /interval 방코드 5h (포럼 토픽: /interval 5h)")
+            return "invalid_interval"
+        match = INTERVAL_PATTERN.fullmatch(value)
+        if not match or not 1 <= int(match[1]) <= 24:
+            self._send(chat_id, thread_id, "발송 간격은 1~24시간의 정수로 지정해주세요. 예: /interval 방코드 5h")
+            return "invalid_interval"
+        if room_key is None and len(routes) != 1:
+            self._send(chat_id, thread_id, self._room_list(routes))
+            return "select_room"
+        try:
+            changed = self.store.set_telegram_interval(chat_id, thread_id, int(match[1]), room_key)
+        except (ValueError, RouteDestinationAmbiguous):
+            self._send(chat_id, thread_id, "방코드가 올바르지 않거나 중복됩니다. /rooms로 다시 확인해주세요.")
+            return "invalid_interval"
+        if changed is None:
+            self._send(chat_id, thread_id, "해당 방을 찾지 못했습니다. /rooms로 다시 확인해주세요.")
+            return "not_mapped"
+        prefix = "발송 간격을 변경했습니다" if changed["changed"] else "이미 설정된 발송 간격입니다"
+        self._send(chat_id, thread_id, f"{prefix}: {changed['interval_hours']}시간")
+        return "interval_changed" if changed["changed"] else "interval_unchanged"
 
     def _process_update(self, update):
         message = update.get("message") if isinstance(update, dict) else None
@@ -146,12 +183,15 @@ class TelegramCommandWorker:
                        "방 목록: /rooms\n"
                        "개인 채팅에서 변경: /name 방코드 새 이름\n"
                        "포럼 토픽에서 변경: /name 새 이름\n"
-                       "현재 이름 또는 목록 확인: /name")
+                       "발송 간격: /interval 방코드 5h (포럼 토픽: /interval 5h)\n"
+                       "현재 설정 확인: /rooms 또는 /interval")
             return "help"
         routes = self.store.telegram_destinations(chat_id, thread_id)
         if command == "rooms":
             self._send(chat_id, thread_id, self._room_list(routes))
             return "rooms"
+        if command == "interval":
+            return self._interval(chat_id, thread_id, argument, routes)
         try:
             route = self.store.telegram_destination(chat_id, thread_id)
         except RouteDestinationAmbiguous:

@@ -13,9 +13,10 @@ TOKEN = "123456:synthetic-" + "x" * 30
 
 class StubStore:
     def __init__(self, route=None):
-        self.route = route or {"display_name": "기존 이름"}
+        self.route = route or {"display_name": "기존 이름", "interval_hours": 1}
         self.offset = 0
         self.renames = []
+        self.intervals = []
 
     def telegram_command_offset(self, bot_id):
         assert bot_id == 123456
@@ -37,6 +38,11 @@ class StubStore:
         assert (chat_id, thread_id) == ("-1009876543210", 77)
         self.renames.append(display_name)
         return {"display_name": display_name, "changed": True}
+
+    def set_telegram_interval(self, chat_id, thread_id, hours, room_key=None):
+        assert (chat_id, thread_id) == ("-1009876543210", 77)
+        self.intervals.append((room_key, hours))
+        return {"interval_hours": hours, "changed": True}
 
 
 def telegram_transport(updates, sent):
@@ -147,3 +153,33 @@ def test_shared_private_chat_name_uses_room_selector():
     assert worker.run_once(wait=False) == {"renamed": 1}
     assert store.renames == ["광교 아파트"]
     assert sent[0]["text"] == "이름을 변경했습니다: 광교 아파트"
+
+
+def test_interval_command_changes_single_topic_and_rejects_invalid_or_unauthorized():
+    assert parse_command("/interval@KakaoRadarBot 5h", "KakaoRadarBot") == ("interval", "5h")
+    store, sent = StubStore(), []
+    worker = TelegramCommandWorker(store, TOKEN, 987654321,
+        transport=telegram_transport([update("/interval 5h")], sent))
+    assert worker.run_once(wait=False) == {"interval_changed": 1}
+    assert store.intervals == [(None, 5)]
+    assert "5시간" in sent[0]["text"]
+    assert worker._process_update(update("/interval 25h")) == "invalid_interval"
+    assert worker._process_update(update("/interval 2h", sender=111)) == "unauthorized"
+    assert store.intervals == [(None, 5)]
+
+
+def test_interval_shared_chat_requires_room_code():
+    class SharedStore(StubStore):
+        def telegram_destinations(self, chat_id, thread_id):
+            return [{"room_id": UUID("25485c30-0000-4000-8000-000000000001"),
+                     "display_name": "fixture A", "interval_hours": 1},
+                    {"room_id": UUID("5a4a05f6-0000-4000-8000-000000000002"),
+                     "display_name": "fixture B", "interval_hours": 1}]
+
+    store, sent = SharedStore(), []
+    worker = TelegramCommandWorker(store, TOKEN, 987654321,
+        transport=telegram_transport([update("/interval 25485c30 5h")], sent))
+    assert worker.run_once(wait=False) == {"interval_changed": 1}
+    assert store.intervals == [("25485c30", 5)]
+    assert worker._process_update(update("/interval")) == "rooms"
+    assert "5h" in sent[-1]["text"]

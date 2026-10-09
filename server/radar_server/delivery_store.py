@@ -142,7 +142,7 @@ class DeliveryStore:
 
     @staticmethod
     def _routes(db, device):
-        routes = db.execute("""SELECT tr.room_id,tr.chat_id,tr.message_thread_id,tr.version,
+        routes = db.execute("""SELECT tr.room_id,tr.chat_id,tr.message_thread_id,tr.version,tr.interval_hours,
             COALESCE(NULLIF(tr.display_name,''),NULLIF(r.display_name,''),'Kakao room') AS display_name
             FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
             WHERE tr.device_id=%s AND tr.enabled AND r.allowed ORDER BY tr.room_id""", (device,)).fetchall()
@@ -153,7 +153,7 @@ class DeliveryStore:
         rooms = db.execute("SELECT room_id,display_name FROM rooms WHERE device_id=%s AND allowed ORDER BY room_id", (device,)).fetchall()
         # Lossless v1 migration: the sole room may continue using the environment chat.
         return [{"room_id": rooms[0]["room_id"], "chat_id": None, "message_thread_id": None,
-                 "version": 0, "display_name": rooms[0]["display_name"]}] if len(rooms) == 1 else []
+                 "version": 0, "interval_hours": 1, "display_name": rooms[0]["display_name"]}] if len(rooms) == 1 else []
 
     @classmethod
     def _route_current(cls, db, device, row):
@@ -199,6 +199,12 @@ class DeliveryStore:
             deliveries = []
             for route in routes:
                 room = route["room_id"]
+                if scheduled and not manual and route["interval_hours"] > 1:
+                    last = db.execute("""SELECT max(slot_at) AS slot FROM delivery_outbox
+                        WHERE device_id=%s AND room_id=%s AND kind IN ('scheduled','manual')
+                        AND status IN ('accepted','uncertain')""", (device, room)).fetchone()["slot"]
+                    if last is not None and due < last + timedelta(hours=route["interval_hours"]):
+                        continue
                 if scheduled and not manual and db.execute("""SELECT 1 FROM delivery_outbox
                     WHERE device_id=%s AND room_id=%s AND kind='scheduled' AND slot_at=%s LIMIT 1""",
                     (device, room, due)).fetchone():
