@@ -163,6 +163,51 @@ def test_two_rooms_share_private_chat_but_create_separate_labeled_bubbles(setup)
                for row in rows)
 
 
+def test_analysis_finishing_after_slot_still_sends_once(setup):
+    _, store, _, delivery, device, room, _, _ = setup
+    policy(setup)
+    due(setup)
+    slot = delivery.policy(device)['next_due_at']
+    assert delivery.plan(device) is None
+    assert delivery.policy(device)['next_due_at'] == slot
+    summary(setup, title='합성 정각 이후 분석 완료')
+    identifier = delivery.plan(device)
+    assert identifier
+    with store.connect() as db:
+        row = db.execute('SELECT slot_at FROM delivery_outbox WHERE delivery_id=%s',
+                         (identifier,)).fetchone()
+    assert row['slot_at'] == slot
+    assert DeliveryWorker(delivery, StubChannel()).process(device) == 'accepted'
+    summary(setup, title='합성 같은 방 후속 후보')
+    assert delivery.plan(device) is None
+    with store.connect() as db:
+        count = db.execute('SELECT count(*) AS n FROM delivery_outbox WHERE device_id=%s AND room_id=%s AND slot_at=%s',
+                           (device, room, slot)).fetchone()['n']
+    assert count == 1
+
+
+def test_second_room_can_join_slot_during_analysis_grace(setup):
+    _, store, _, delivery, device, first_room, headers, _ = setup
+    second_room = uuid4()
+    store.provision(device, second_room, headers['Authorization'].removeprefix('Bearer '), 'fixture-second')
+    store.update_route(device, first_room, chat_id='123456789', message_thread_id=None,
+                       display_name='fixture-first', enabled=True, expected_version=0)
+    store.update_route(device, second_room, chat_id='123456789', message_thread_id=None,
+                       display_name='fixture-second', enabled=True, expected_version=0)
+    policy(setup)
+    due(setup)
+    slot = delivery.policy(device)['next_due_at']
+    summary(setup, title='합성 첫 방', room=first_room)
+    assert delivery.plan(device)
+    summary(setup, title='합성 늦은 둘째 방', room=second_room)
+    assert delivery.plan(device)
+    assert delivery.plan(device) is None
+    with store.connect() as db:
+        rows = db.execute('SELECT room_id FROM delivery_outbox WHERE device_id=%s AND slot_at=%s',
+                          (device, slot)).fetchall()
+    assert {row['room_id'] for row in rows} == {first_room, second_room}
+
+
 def test_route_change_cancels_unsent_snapshot_before_publish(setup):
     _, store, _, delivery, device, room, _, _ = setup
     store.update_route(device, room, chat_id='-1001234567890', message_thread_id=101,

@@ -17,6 +17,9 @@ class DeliveryConflict(Exception):
     pass
 
 
+SCHEDULE_GRACE = timedelta(minutes=5)
+
+
 @dataclass(frozen=True)
 class SendClaim:
     delivery_id: UUID
@@ -188,12 +191,18 @@ class DeliveryStore:
             routes = self._routes(db, device)
             if not routes:
                 return None
-            # Downtime produces one catch-up digest, never one notification per missed slot.
-            if scheduled:
+            # Keep the slot open briefly: Xiaomi can post notifications just before
+            # the hour while analysis finishes just after it. Older downtime still
+            # produces one catch-up digest, not one per missed slot.
+            if scheduled and now >= due + SCHEDULE_GRACE:
                 db.execute("UPDATE delivery_settings SET next_due_at=%s WHERE device_id=%s", (next_slot(policy, now), device))
             deliveries = []
             for route in routes:
                 room = route["room_id"]
+                if scheduled and not manual and db.execute("""SELECT 1 FROM delivery_outbox
+                    WHERE device_id=%s AND room_id=%s AND kind='scheduled' AND slot_at=%s LIMIT 1""",
+                    (device, room, due)).fetchone():
+                    continue
                 if not scheduled and not manual and db.execute("""SELECT 1 FROM delivery_outbox
                     WHERE device_id=%s AND room_id=%s AND kind='urgent' AND created_at>=%s
                     AND status IN ('pending','sending','retry_wait','accepted','uncertain')""",

@@ -85,6 +85,8 @@ The helper configures the database policy for hourly delivery (up to 24 notifica
 sudo systemctl enable --now kakao-radar-analysis kakao-radar-delivery kakao-radar-telegram-commands
 ```
 
+The delivery planner keeps each hourly slot open for five minutes so KakaoTalk notifications arriving just before the hour can finish analysis. It sends ready rooms at the hour and late rooms during that grace period, at most once per room per slot.
+
 Retention stays disabled because it removes expired data. There is no retention unit in the Pi install; configure a retention window only after reviewing it.
 
 ## Optional Xiaomi KakaoTalk wake before delivery

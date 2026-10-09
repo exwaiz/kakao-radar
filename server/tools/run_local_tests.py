@@ -17,6 +17,7 @@ def main():
                         help="Test cluster directory; use a WSL ext4 path instead of /mnt/c")
     parser.add_argument("--port", type=int, default=55330)
     parser.add_argument("--serve", action="store_true", help="Keep the synthetic phone digest open for local UI verification")
+    parser.add_argument("--tests-only", action="store_true", help="Skip optional demos after the test suite")
     parser.add_argument("--server-port", type=int, default=8004)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -49,10 +50,11 @@ def main():
             if not db.execute("SELECT 1 FROM pg_database WHERE datname='radar_m4_test'").fetchone():
                 db.execute("CREATE DATABASE radar_m4_test")
         env["RADAR_TEST_DATABASE_URL"] = f"postgresql://radar_test@127.0.0.1:{args.port}/radar_m4_test"
-        result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml=.state/m4-tests.xml"], cwd=root, env=env)
-        if result.returncode == 0:
+        result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                                 "--junitxml=" + str(state / "m4-tests.xml")], cwd=root, env=env)
+        if result.returncode == 0 and not args.tests_only:
             result = subprocess.run([sys.executable,"tools/demo_m3.py"],cwd=root,env=env)
-        if result.returncode == 0:
+        if result.returncode == 0 and not args.tests_only:
             command = [sys.executable,"tools/demo_m4.py"]
             if args.serve:
                 command.extend(["--serve","--port",str(args.server_port)])
