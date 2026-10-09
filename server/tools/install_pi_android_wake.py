@@ -40,17 +40,22 @@ def main():
     unit_dir = Path('/etc/systemd/system')
     source_dir = PROJECT_ROOT / 'server/systemd'
     shutil.copyfile(source_dir / 'kakao-radar-adb@.service', unit_dir / 'kakao-radar-adb@.service')
+    shutil.copyfile(source_dir / 'kakao-radar-adb-maintain@.service', unit_dir / 'kakao-radar-adb-maintain@.service')
+    shutil.copyfile(source_dir / 'kakao-radar-adb-maintain@.timer', unit_dir / 'kakao-radar-adb-maintain@.timer')
     shutil.copyfile(source_dir / 'kakao-radar-kakao-wake.service', unit_dir / 'kakao-radar-kakao-wake.service')
     shutil.copyfile(source_dir / 'kakao-radar-kakao-wake.timer', unit_dir / 'kakao-radar-kakao-wake.timer')
-    for name in ('kakao-radar-adb@.service','kakao-radar-kakao-wake.service','kakao-radar-kakao-wake.timer'):
+    for name in ('kakao-radar-adb@.service','kakao-radar-adb-maintain@.service',
+                 'kakao-radar-adb-maintain@.timer','kakao-radar-kakao-wake.service',
+                 'kakao-radar-kakao-wake.timer'):
         os.chown(unit_dir / name, 0, 0)
         os.chmod(unit_dir / name, 0o644)
     subprocess.run(['systemctl','disable','--now','kakao-radar-adb.service'], check=False,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(['systemctl','daemon-reload'], check=True)
     subprocess.run(['systemctl','enable','--now',f'kakao-radar-adb@{args.adb_user}.service',
+                    f'kakao-radar-adb-maintain@{args.adb_user}.timer',
                     'kakao-radar-kakao-wake.timer'],check=True)
-    print('ADB wake timer enabled; KakaoTalk is opened five minutes before eligible hourly deliveries.')
+    print('ADB upload maintenance and KakaoTalk wake timers enabled.')
 
 
 if __name__ == '__main__':

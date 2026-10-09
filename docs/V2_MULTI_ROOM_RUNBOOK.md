@@ -49,7 +49,7 @@ python -m radar_server.manage migrate
 sudo systemctl enable --now kakao-radar-telegram-commands
 ```
 
-각 방의 Telegram 토픽에서는 `/name 새 이름`을 보낸다. 여러 방이 기존 private chat 하나를 공유하면 `/rooms` 뒤 `/name 방코드 새 이름`을 보낸다. `/name`은 단일 route의 현재 이름 또는 공유 route 목록을, `/help`는 사용법을 표시한다. 명령은 관리자 ID와 단일 topic route 또는 고유 방코드가 확인될 때만 반영된다. webhook이나 다른 long-poll 프로세스가 같은 봇의 update를 소비하고 있으면 이 worker와 함께 사용할 수 없다.
+각 방의 Telegram 토픽에서는 `/name 새 이름`을 보낸다. 여러 방이 기존 private chat 하나를 공유하면 `/rooms` 뒤 `/name 방코드 새 이름`을 보낸다. 방별 정기 발송 간격은 private chat에서 `/interval 방코드 5h`, forum topic에서 `/interval 5h`로 1~24시간 사이에서 설정한다. `/rooms`는 각 방의 간격을 함께 표시한다. `/name`은 단일 route의 현재 이름 또는 공유 route 목록을, `/help`는 사용법을 표시한다. 명령은 관리자 ID와 단일 topic route 또는 고유 방코드가 확인될 때만 반영된다. webhook이나 다른 long-poll 프로세스가 같은 봇의 update를 소비하고 있으면 이 worker와 함께 사용할 수 없다.
 
 8. `/v1/status`에서 방별 최근 수신·저장 수·분석 backlog를, `/v1/delivery/status`에서 미라우팅 방을 확인한다. 모든 방이 provision·route된 뒤 Android 수집과 동기화를 다시 켠다.
 9. 한 방씩 합성 아닌 새 메시지를 보내 APK 방별 저장, WSL 방별 수신, 해당 Telegram topic 수신을 순서대로 확인한다. callback 수를 메시지 수나 수집률로 기록하지 않는다.

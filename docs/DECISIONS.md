@@ -1,5 +1,32 @@
 # Kakao Radar — Decision Log
 
+## D-023 — Telegram에서 방별 정기 요약 간격 설정 (2026-10-09)
+
+- 기존 공통 정각 슬롯과 5분 분석 대기는 유지한다. `telegram_routes.interval_hours`를 schema 8로 추가하고 모든 기존 방은 1시간으로 시작한다.
+- 관리자만 개인 채팅에서 `/interval 방코드 5h`, 단일 forum topic에서 `/interval 5h`로 각 방의 간격을 1~24시간 정수로 설정한다. `/rooms`와 `/interval`로 현재 값을 확인한다. 고유 방코드와 활성 route를 검증하며 바뀐 방의 route version만 올리고 아직 시작하지 않은 outbox만 취소한다.
+- 마지막 `accepted` 또는 `uncertain` 정기·수동 발송의 슬롯부터 지정 간격이 지나야 해당 방에 다음 정기 outbox를 만든다. 빈 슬롯은 발송으로 세지 않는다. 긴급 발송과 명시 수동 발송은 간격 제한을 받지 않는다. 다른 방의 정기 발송은 독립적으로 유지한다.
+
+## D-022 — 정각 이후 분석 완료를 위한 5분 슬롯 유지 (2026-10-06)
+
+- 18:55 KakaoTalk 깨우기 성공 후 18:59 메시지 34건 수신, 첫 후보 19:00:18 생성. 기존 계획기는 19:00:09에 후보가 없다는 이유로 `next_due_at`을 20:00으로 이동해 19시 발송을 누락했다.
+- 정기 슬롯은 due부터 5분간 열어 둔다. 후보가 이미 있으면 정각에 보낼 수 있고, 분석이 늦게 끝나면 같은 슬롯에서 최대 5분 안에 보낸다. 5분 후에는 다음 정기 슬롯으로 진도 이동한다.
+- 같은 Kakao 방의 정기 outbox는 슬롯당 최대 하나로 제한한다. 다른 방의 후보가 뒤늦게 완료되면 열린 슬롯에서 별도 outbox를 만들 수 있다. 장시간 중단 후에는 이전처럼 밀린 모든 슬롯을 개별 발송하지 않고 한 번만 catch-up 한다.
+- 19시 미발송 후보는 기존 진도·중복 억제·quota를 거치는 수동 보충으로 3건 API 수락을 확인했고, 20시 정기 due를 유지했다.
+
+## D-021 — 요약 유무와 무관한 정기 KakaoTalk 깨우기 (2026-10-06)
+
+- 사용자가 요청한 매시 정각 발송 5분 전 KakaoTalk 실행은 활성화된 정기 발송 슬롯마다 수행한다. 이미 분석된 요약이나 outbox가 있어야만 깨우는 조건은 제거한다.
+- Xiaomi가 KakaoTalk을 잠재우면 신규 알림 수집이 멈추고 요약도 생기지 않아 기존 조건은 자기 차단을 만들었다. 12:55 이후 `no_sendable_summary` 연속 건너뜀과 수동 KakaoTalk 실행 직후 3건 수집·동기화로 확인했다.
+- 발송 정책이 꺼져 있거나 정기 슬롯 5분 전이 아닌 경우에는 깨우지 않는다. 한 슬롯 한 번 시도와 실행 뒤 홈 화면 복귀를 유지한다. 알림이 없던 시간의 모든 메시지가 복구되는 것으로 간주하지 않는다.
+
+## D-020 — 화면 없는 Android 수집기와 ADB 운영 명령 (2026-10-06)
+
+- 사용자는 원격 Xiaomi를 직접 조작할 수 없으므로 Android v3에서 launcher Activity를 제거한다. 수집은 기존 NotificationListenerService, Room DB, 방별 ID, 암호화된 기기 토큰을 그대로 보존한다. `adb install -r`로 같은 서명 APK를 업데이트하며 앱 데이터 삭제·방 재선택·토큰 재발급은 하지 않는다.
+- exported `AdbControlReceiver`와 화면 없는 `AdbBootstrapActivity`는 Android의 보호된 `android.permission.DUMP`를 요구한다. ADB shell만 상태·방 선택·수집 on/off·리스너 재연결·즉시 단일 배치 동기화·진단 내보내기·명시적 로컬 삭제를 호출한다. Xiaomi가 cold broadcast를 막으면 CLI가 bootstrap을 실행해 한 번 재시도한다. 인텐트에 원문이나 토큰을 싣지 않고, 반환 데이터에 원문을 넣지 않는다. 방 이름은 사용자가 이전에 허용한 운영 메타데이터로만 `rooms` 조회에 표시한다.
+- 즉시 동기화는 기존 WorkManager 재시도 지연을 기다리지 않고 동일 `SyncEngine`과 방별 round-robin 규칙을 사용한다. Pi CLI의 drain은 단일 배치를 반복하되 실패·진도 없음·상한에서 멈춘다. 모든 서버 업로드는 기존 HTTPS/인증/방 allowlist 계약을 유지한다.
+- Pi는 5분 timer로 승인된 Wi-Fi ADB 연결과 `adb reverse tcp:8443 tcp:8443`을 확인·복구한 뒤 backlog를 drain한다. localhost HTTPS는 계속 Pi loopback에만 수신한다. GUI 없는 앱에서는 KakaoTalk 사전 깨우기 뒤 홈 화면으로 돌아간다.
+- Android 알림 접근을 최초 부여하는 OS 단계는 ADB의 `cmd notification allow_listener`로 수행한다. 같은 패키지 설치와 보존된 권한을 우선하며, 권한 없는 타 기기를 임의로 설정하지 않는다.
+
 ## D-019 — Telegram 토픽 명령으로 방 표시명 설정 (2026-09-29)
 
 - 기존 봇 하나와 D-018의 방별 forum topic route를 그대로 사용한다. 별도 봇을 방마다 만들지 않는다.

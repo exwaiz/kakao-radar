@@ -204,3 +204,13 @@ CREATE TABLE IF NOT EXISTS telegram_command_state (
  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO schema_versions(version) VALUES(7) ON CONFLICT DO NOTHING;
+
+-- V2.2: independent minimum scheduled digest interval for each Telegram route.
+ALTER TABLE telegram_routes ADD COLUMN IF NOT EXISTS interval_hours INTEGER NOT NULL DEFAULT 1;
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='telegram_routes_interval_hours_check') THEN
+  ALTER TABLE telegram_routes ADD CONSTRAINT telegram_routes_interval_hours_check
+   CHECK(interval_hours BETWEEN 1 AND 24);
+ END IF;
+END $$;
+INSERT INTO schema_versions(version) VALUES(8) ON CONFLICT DO NOTHING;

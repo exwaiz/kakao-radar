@@ -107,7 +107,7 @@ class RadarApp : Application() {
         prune()
         output.bufferedWriter(Charsets.UTF_8).use { writer ->
             writer.appendLine(JSONObject().put("type", "metadata").put("format_version", 1)
-                .put("app_version", "2.0.0").put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+                .put("app_version", "3.0.0").put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
                 .put("android", Build.VERSION.RELEASE).put("build", Build.DISPLAY)
                 .put("exported_at", System.currentTimeMillis()).put("retention_days", 7)
                 .put("includes_messages", includeMessages)

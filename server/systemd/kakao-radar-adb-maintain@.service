@@ -1,0 +1,11 @@
+[Unit]
+Description=Keep Kakao Radar ADB tunnel and upload queue running for %i
+After=network-online.target kakao-radar-adb@%i.service kakao-radar-local-https.service
+Wants=network-online.target kakao-radar-adb@%i.service
+
+[Service]
+Type=oneshot
+User=%i
+EnvironmentFile=/etc/default/kakao-radar-adb
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 "$RADAR_PROJECT_ROOT/server/tools/radar_adb.py" maintain --serial "$RADAR_ANDROID_SERIAL" --max-batches 40'
+TimeoutStartSec=180

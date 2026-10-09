@@ -81,7 +81,9 @@ class SyncSettings(private val context: Context, private val preferenceName: Str
 
 data class UploadReply(val statusCode: Int, val body: String)
 fun interface UploadTransport { fun post(target: SyncTarget, payload: String): UploadReply }
-class HttpsUploadTransport(private val socketFactory: SSLSocketFactory? = null) : UploadTransport {
+class HttpsUploadTransport(private val socketFactory: SSLSocketFactory? = null,
+                           private val connectTimeoutMs: Int = 15000,
+                           private val readTimeoutMs: Int = 20000) : UploadTransport {
     override fun post(target: SyncTarget, payload: String): UploadReply {
         val connection = URL("${target.server}/v1/messages/batch").openConnection() as HttpsURLConnection
         try {
@@ -95,7 +97,7 @@ class HttpsUploadTransport(private val socketFactory: SSLSocketFactory? = null) 
             (socketFactory ?: pinned)?.let { connection.sslSocketFactory = it }
             connection.requestMethod = "POST"
             connection.instanceFollowRedirects = false
-            connection.connectTimeout = 15000; connection.readTimeout = 20000
+            connection.connectTimeout = connectTimeoutMs; connection.readTimeout = readTimeoutMs
             connection.doOutput = true
             connection.setRequestProperty("Authorization", "Bearer ${target.token}")
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")

@@ -163,6 +163,104 @@ def test_two_rooms_share_private_chat_but_create_separate_labeled_bubbles(setup)
                for row in rows)
 
 
+def test_route_interval_delays_only_selected_room_and_keeps_other_room_hourly(setup):
+    _, store, _, delivery, device, first_room, headers, _ = setup
+    second_room = uuid4()
+    store.provision(device, second_room, headers['Authorization'].removeprefix('Bearer '), 'fixture-second')
+    for room in (first_room, second_room):
+        store.update_route(device, room, chat_id='123456789', message_thread_id=None,
+                           display_name='fixture-room', enabled=True, expected_version=0)
+    policy(setup)
+    due(setup)
+    summary(setup, title='fixture-initial-first', room=first_room)
+    summary(setup, title='fixture-initial-second', room=second_room)
+    assert len(delivery.plan(device)) == 2
+    channel = StubChannel()
+    assert DeliveryWorker(delivery, channel).process(device) == 'accepted'
+    assert DeliveryWorker(delivery, channel).process(device) == 'accepted'
+    changed = store.set_telegram_interval('123456789', None, 5, str(first_room)[:8])
+    assert changed['changed'] and changed['interval_hours'] == 5
+    assert {r['room_id']: r['interval_hours'] for r in store.routes(device)} == {
+        first_room: 5, second_room: 1}
+    summary(setup, title='fixture-next-first', room=first_room)
+    summary(setup, title='fixture-next-second', room=second_room)
+    due(setup)
+    second_delivery = delivery.plan(device)
+    with store.connect() as db:
+        assert db.execute('SELECT room_id FROM delivery_outbox WHERE delivery_id=%s',
+                          (second_delivery,)).fetchone()['room_id'] == second_room
+    assert DeliveryWorker(delivery, channel).process(device) == 'accepted'
+    with store.connect() as db:
+        db.execute("""UPDATE delivery_outbox SET slot_at=now()-interval '6 hours'
+            WHERE device_id=%s AND room_id=%s AND status='accepted'""", (device, first_room))
+    due(setup)
+    first_delivery = delivery.plan(device)
+    with store.connect() as db:
+        assert db.execute('SELECT room_id FROM delivery_outbox WHERE delivery_id=%s',
+                          (first_delivery,)).fetchone()['room_id'] == first_room
+
+
+def test_interval_change_cancels_only_selected_pending_route(setup):
+    _, store, _, delivery, device, room, _, _ = setup
+    store.update_route(device, room, chat_id='123456789', message_thread_id=None,
+                       display_name='fixture-room', enabled=True, expected_version=0)
+    policy(setup)
+    due(setup)
+    summary(setup, title='fixture-before-interval-change')
+    delivery_id = delivery.plan(device)
+    assert store.set_telegram_interval('123456789', None, 5)['changed']
+    assert not store.set_telegram_interval('123456789', None, 5)['changed']
+    with store.connect() as db:
+        row = db.execute('SELECT status,last_error FROM delivery_outbox WHERE delivery_id=%s',
+                         (delivery_id,)).fetchone()
+    assert (row['status'], row['last_error']) == ('cancelled', 'route_interval_changed')
+
+
+def test_analysis_finishing_after_slot_still_sends_once(setup):
+    _, store, _, delivery, device, room, _, _ = setup
+    policy(setup)
+    due(setup)
+    slot = delivery.policy(device)['next_due_at']
+    assert delivery.plan(device) is None
+    assert delivery.policy(device)['next_due_at'] == slot
+    summary(setup, title='합성 정각 이후 분석 완료')
+    identifier = delivery.plan(device)
+    assert identifier
+    with store.connect() as db:
+        row = db.execute('SELECT slot_at FROM delivery_outbox WHERE delivery_id=%s',
+                         (identifier,)).fetchone()
+    assert row['slot_at'] == slot
+    assert DeliveryWorker(delivery, StubChannel()).process(device) == 'accepted'
+    summary(setup, title='합성 같은 방 후속 후보')
+    assert delivery.plan(device) is None
+    with store.connect() as db:
+        count = db.execute('SELECT count(*) AS n FROM delivery_outbox WHERE device_id=%s AND room_id=%s AND slot_at=%s',
+                           (device, room, slot)).fetchone()['n']
+    assert count == 1
+
+
+def test_second_room_can_join_slot_during_analysis_grace(setup):
+    _, store, _, delivery, device, first_room, headers, _ = setup
+    second_room = uuid4()
+    store.provision(device, second_room, headers['Authorization'].removeprefix('Bearer '), 'fixture-second')
+    store.update_route(device, first_room, chat_id='123456789', message_thread_id=None,
+                       display_name='fixture-first', enabled=True, expected_version=0)
+    store.update_route(device, second_room, chat_id='123456789', message_thread_id=None,
+                       display_name='fixture-second', enabled=True, expected_version=0)
+    policy(setup)
+    due(setup)
+    slot = delivery.policy(device)['next_due_at']
+    summary(setup, title='합성 첫 방', room=first_room)
+    assert delivery.plan(device)
+    summary(setup, title='합성 늦은 둘째 방', room=second_room)
+    assert delivery.plan(device)
+    assert delivery.plan(device) is None
+    with store.connect() as db:
+        rows = db.execute('SELECT room_id FROM delivery_outbox WHERE device_id=%s AND slot_at=%s',
+                          (device, slot)).fetchall()
+    assert {row['room_id'] for row in rows} == {first_room, second_room}
+
+
 def test_route_change_cancels_unsent_snapshot_before_publish(setup):
     _, store, _, delivery, device, room, _, _ = setup
     store.update_route(device, room, chat_id='-1001234567890', message_thread_id=101,

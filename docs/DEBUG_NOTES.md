@@ -1,5 +1,29 @@
 # Kakao Radar — Real-device Debug Notes
 
+## 2026-10-06 저녁 — 19:00 분석·발송 경합
+
+- 17:55와 18:55 KakaoTalk wake는 각각 `completed`였다. 18:59에 폰·Pi로 새 메시지 34건이 수집됐고 폰 listener/동기화는 활성, 대기 0건이었다. 18:00 Telegram 2건은 수락됐으나 19:00 outbox는 생성되지 않았다.
+- 발송 워커가 19:00:09에 `idle`로 계획을 마치고 다음 due를 20:00으로 이동했다. 첫 분석 후보는 19:00:18, 마지막은 19:01:44에 생성됐다. 따라서 19시 누락은 Telegram API 오류가 아니라 정각 경계에서 계획이 분석보다 앞선 경합이다.
+- 미발송 후보를 중복·진도·quota 규칙이 적용되는 `manual` 계획으로 보충했다. 방별 3건 모두 Telegram API `accepted`, 활성 대기 0건, 다음 정기 due 20:00을 확인했다.
+- 계획기를 수정해 정기 슬롯을 5분간 유지하고, 같은 방의 정기 outbox를 한 슬롯에 한 번으로 제한했다. 별도 PostgreSQL 테스트 클러스터에서 서버 회귀 207건 통과(기존 dependency 경고 2건). 운영 `kakao-radar-delivery` 워커를 재시작했고 활성 상태를 확인했다. 20시 정기 결과는 별도로 확인한다.
+
+## 2026-10-06 오후 — 12:00 이후 수집 정지와 wake 조건 순환
+
+- 16:42 KST 점검에서 Android collector v3는 listener 연결·수집·동기화 활성, 대기 0건이었다. 폰과 Pi의 마지막 실제 메시지는 11:56:20, 분석 마지막 완료는 11:58, Telegram 마지막 API 수락은 12:00이었다. 4개 Telegram route와 서버 서비스는 활성 상태였다.
+- wake timer 로그는 10:55와 11:55에 완료, 12:55부터 매시 `wake_skipped=no_sendable_summary`였다. 기존 스크립트가 이미 분석된 후보가 있어야 카카오톡을 실행하는 구조여서, 잠든 KakaoTalk의 새 알림을 깨우지 못했다.
+- 16:43 무렵 ADB로 KakaoTalk을 한 번 실행하고 홈으로 돌아오자 폰 저장 수가 1,099→1,102, 전송 완료 수도 1,102로 증가하고 대기 0건을 확인했다. 따라서 이번 구간은 Telegram API 장애가 아니라 새 알림 수집 중단이 직접 원인이다. 알림이 없던 과거 대화 전체가 복구됐다는 뜻은 아니다.
+- 정기 발송이 활성화된 슬롯 5분 전에는 후보/요약과 무관하게 KakaoTalk을 실행하도록 수정했다. 16:55 실제 timer가 `wake_result=completed`로 끝났고 폰 저장 1,102→1,104, Pi 수신 1,104, 분석 후보 2건 추가와 대기 0건을 확인했다. 17:00 슬롯에서 방별 outbox 2건이 각각 Telegram API `accepted`로 기록됐고 다음 due는 18:00이다. 사용자 본폰 표시 여부는 별도다.
+
+## 2026-10-06 — 폰 로컬 수집과 Pi 업로드의 분리 장애
+
+- 샤오미는 Wi-Fi ADB `192.168.50.124:5555`에 연결됐고 알림 listener가 허용됐다. 폰 Room DB는 2026-10-06 09:35 KST까지 저장했으며 당시 저장 1,039건 중 전송 완료 257건·대기 782건이었다. Pi DB 최종 수신은 2026-10-04 20:08 KST, Telegram API 최종 수락은 21:00 KST였다.
+- Android 동기화 설정은 `https://localhost:8443`이고 오류는 연결 실패였다. USB 해제 뒤 Wi-Fi ADB는 연결됐으나 `adb reverse --list`가 비어 있었다. 수동 `adb reverse tcp:8443 tcp:8443` 복구 뒤 폰의 TCP 8443 접근과 Pi localhost HTTPS 상태·인증서 일치를 확인했다. WorkManager는 지연 재시도 중이었고 강제 JobScheduler 실행으로도 업로드 진도는 없었다.
+- 잠금 해제 뒤 `MainActivity`를 열었으나 Xiaomi의 ADB `input swipe`는 `INJECT_EVENTS` 권한 거부로 막혔다. 사용자 요청에 따라 화면이 필요 없는 ADB 수집기 v3로 교체 개발을 시작했다. 교체·실제 업로드·Telegram 재수신 결과는 검증 전까지 별도로 기록한다.
+- **v3 교체 실기기 결과:** 기존 APK와 새 debug APK의 서명 SHA-256 일치를 확인하고 앱 전용 DB·설정을 저장소 밖 0600 백업에 보관한 뒤 `adb install -r` 성공. 방 4개, 로컬 1,042건, 암호화된 기기 동기화 설정을 보존했다. `AdbControlReceiver`의 shell/DUMP 제어로 첫 100건을 즉시 업로드하고 이어 685건을 drain하여 대기 0건·전송 완료 1,042건을 확인했다. Pi는 이번 업로드 785건 수신, 분석 요약도 새로 생성했다. Telegram은 다음 정기 슬롯 전이므로 신규 API 수락은 아직 확인되지 않았다.
+- 업데이트 직후 listener 권한은 허용돼 있었으나 실제 바인딩은 빠져 있었다. ADB `cmd notification disallow_listener`→`allow_listener`와 receiver 재연결 명령으로 live listener/앱 `listener_connected=true`를 확인했다. Pi의 5분 ADB 유지 timer가 터널 재설정·대기 업로드·listener 재연결을 수행하도록 설치하고 수동 실행에 성공했다. 이는 장시간 화면 OFF 실측을 대신하지 않는다.
+- `adb reverse`를 일부러 제거한 뒤 유지 서비스를 실행해 터널 복구를 확인했다. 앱을 `am force-stop`한 뒤에도 같은 서비스가 앱과 listener를 되살리고 전송 대기 0건을 유지했다. Android lint와 APK 빌드는 통과했고, Pi aarch64에서는 Robolectric native runtime 미지원으로 해당 JVM 테스트 실행이 제한된다. 호스트 ADB CLI 단위 테스트 5개는 통과했다.
+- 같은 v3 APK 재설치 직후에는 Xiaomi가 cold broadcast와 notification listener의 자동 시작을 거부했다. ADB broadcast는 `result=0`만 반환하고 receiver 데이터가 없었다. 화면 없는 `Theme.NoDisplay` bootstrap Activity를 shell/DUMP 권한으로 보호해 추가하고, CLI가 빈 응답일 때 이를 한 번 실행한 뒤 명령을 재시도하도록 보강했다. 최종 APK 재설치 뒤 `status`와 bootstrap의 직접 ADB 실행이 성공했고, `force-stop` 뒤 CLI 상태 조회 및 유지 서비스 실행으로 listener live·reverse 8443·pending 0을 다시 확인했다. 자동 fallback 분기는 호스트 단위 테스트에서 검증했다.
+
 ## 2026-09-28 — 하루 4회 Telegram 테스트 일정
 
 - 사용자 요청으로 테스트 기간의 정기 발송 시각을 `Asia/Seoul` 11:00, 15:00, 20:00, 23:00으로 변경했다. 종료일은 지정되지 않아 사용자가 다시 변경할 때까지 유지한다.

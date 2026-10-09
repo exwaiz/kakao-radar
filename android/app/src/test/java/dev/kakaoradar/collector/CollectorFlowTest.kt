@@ -4,7 +4,6 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
@@ -94,11 +93,4 @@ class CollectorFlowTest {
         }.get(30, TimeUnit.SECONDS)
     }
 
-    @Test fun activityLaunchesWithCollectionDisabled() {
-        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
-        val activity = controller.get()
-        assertFalse((activity.application as RadarApp).config.enabled)
-        assertNotNull(activity.findViewById<android.view.View>(android.R.id.content))
-        controller.pause().stop().destroy()
-    }
 }

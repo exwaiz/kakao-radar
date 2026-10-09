@@ -109,13 +109,13 @@ class Store:
                 p.observed_through,
                 count(DISTINCT j.job_id) FILTER (WHERE j.status IN ('running','retry_wait','paused')) AS analysis_backlog,
                 tr.chat_id,tr.message_thread_id,tr.display_name AS route_display_name,
-                tr.enabled AS route_enabled,tr.version AS route_version
+                tr.enabled AS route_enabled,tr.version AS route_version,tr.interval_hours AS route_interval_hours
                 FROM rooms r LEFT JOIN messages m USING(device_id,room_id)
                 LEFT JOIN delivery_progress p USING(device_id,room_id)
                 LEFT JOIN analysis_jobs j USING(device_id,room_id)
                 LEFT JOIN telegram_routes tr USING(device_id,room_id)
                 WHERE r.device_id=%s GROUP BY r.device_id,r.room_id,p.observed_through,
-                tr.chat_id,tr.message_thread_id,tr.display_name,tr.enabled,tr.version
+                tr.chat_id,tr.message_thread_id,tr.display_name,tr.enabled,tr.version,tr.interval_hours
                 ORDER BY r.display_name,r.room_id""", (device,)).fetchall()
         return {**total, "rooms": rooms}
 
@@ -132,7 +132,7 @@ class Store:
 
     def routes(self, device):
         with self.connect() as db:
-            return db.execute("""SELECT tr.room_id,tr.chat_id,tr.message_thread_id,tr.display_name,tr.enabled,tr.version,tr.updated_at
+            return db.execute("""SELECT tr.room_id,tr.chat_id,tr.message_thread_id,tr.display_name,tr.enabled,tr.version,tr.interval_hours,tr.updated_at
                 FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
                 WHERE tr.device_id=%s AND r.allowed ORDER BY tr.display_name,tr.room_id""", (device,)).fetchall()
 
@@ -186,7 +186,7 @@ class Store:
         suffix = " FOR UPDATE OF tr,r" if lock else ""
         rows = db.execute("""SELECT tr.device_id,tr.room_id,tr.chat_id,tr.message_thread_id,
             COALESCE(NULLIF(tr.display_name,''),r.display_name) AS display_name,
-            tr.display_name AS route_display_name,tr.version
+            tr.display_name AS route_display_name,tr.version,tr.interval_hours
             FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
             JOIN devices d USING(device_id) WHERE tr.chat_id=%s
             AND COALESCE(tr.message_thread_id,0)=COALESCE(%s,0)
@@ -204,7 +204,7 @@ class Store:
         with self.connect() as db:
             return db.execute("""SELECT tr.device_id,tr.room_id,tr.chat_id,tr.message_thread_id,
                 COALESCE(NULLIF(tr.display_name,''),r.display_name) AS display_name,
-                tr.display_name AS route_display_name,tr.version
+                tr.display_name AS route_display_name,tr.version,tr.interval_hours
                 FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
                 JOIN devices d USING(device_id) WHERE tr.chat_id=%s
                 AND COALESCE(tr.message_thread_id,0)=COALESCE(%s,0)
@@ -251,7 +251,7 @@ class Store:
         with self.connect() as db:
             rows = db.execute("""SELECT tr.device_id,tr.room_id,tr.chat_id,tr.message_thread_id,
                 COALESCE(NULLIF(tr.display_name,''),r.display_name) AS display_name,
-                tr.display_name AS route_display_name,tr.version
+                tr.display_name AS route_display_name,tr.version,tr.interval_hours
                 FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
                 JOIN devices d USING(device_id) WHERE tr.chat_id=%s
                 AND COALESCE(tr.message_thread_id,0)=COALESCE(%s,0)
@@ -263,6 +263,46 @@ class Store:
             if not rows:
                 return None
             return self._rename_telegram_route(db, rows[0], display_name)
+
+    @staticmethod
+    def _set_telegram_interval(db, route, hours):
+        if route["interval_hours"] == hours:
+            return {**route, "changed": False}
+        updated = db.execute("""UPDATE telegram_routes SET interval_hours=%s,version=version+1,
+            updated_at=clock_timestamp() WHERE device_id=%s AND room_id=%s
+            RETURNING device_id,room_id,interval_hours,version""",
+            (hours, route["device_id"], route["room_id"])).fetchone()
+        from .delivery_store import DeliveryStore
+        pending = db.execute("""SELECT delivery_id FROM delivery_outbox WHERE device_id=%s AND room_id=%s
+            AND status IN ('pending','retry_wait') FOR UPDATE""",
+            (route["device_id"], route["room_id"])).fetchall()
+        for item in pending:
+            DeliveryStore._cancel(db, item["delivery_id"], "route_interval_changed")
+        return {**updated, "changed": True}
+
+    def set_telegram_interval(self, chat_id, message_thread_id, hours, room_key=None):
+        """Change one active route selected by its destination and optional UUID prefix."""
+        if type(hours) is not int or not 1 <= hours <= 24:
+            raise ValueError("Invalid interval")
+        if room_key is not None:
+            room_key = str(room_key).strip().casefold()
+            if not re.fullmatch(r"[0-9a-f]{8,36}", room_key):
+                raise ValueError("Invalid room key")
+        with self.connect() as db:
+            if room_key is None:
+                route = self._telegram_destination(db, chat_id, message_thread_id, lock=True)
+            else:
+                rows = db.execute("""SELECT tr.device_id,tr.room_id,tr.interval_hours
+                    FROM telegram_routes tr JOIN rooms r USING(device_id,room_id)
+                    JOIN devices d USING(device_id) WHERE tr.chat_id=%s
+                    AND COALESCE(tr.message_thread_id,0)=COALESCE(%s,0)
+                    AND lower(tr.room_id::text) LIKE %s AND tr.enabled AND r.allowed AND d.active
+                    ORDER BY tr.device_id,tr.room_id FOR UPDATE OF tr,r""",
+                    (str(chat_id), message_thread_id, room_key + "%")).fetchall()
+                if len(rows) > 1:
+                    raise RouteDestinationAmbiguous()
+                route = rows[0] if rows else None
+            return self._set_telegram_interval(db, route, hours) if route else None
 
     def telegram_command_offset(self, bot_id):
         with self.connect() as db:

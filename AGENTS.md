@@ -6,6 +6,14 @@
 
 ## Current milestone
 
+2026-10-09 방별 Telegram 정기 발송 간격을 schema 8과 `/interval 방코드 5h` 명령으로 추가한다. 기존 방은 1시간을 유지하며, 마지막 수락·불확실한 정기/수동 슬롯부터 간격을 계산한다. D-023을 따른다.
+
+2026-10-06 저녁 최신 장애: 18:55 KakaoTalk wake 성공 후 18:59 실제 알림이 도착하고 19:00:18부터 분석 후보가 생성됐다. 발송 워커는 19:00:09에 빈 후보를 보고 due를 20:00으로 이동시켜 19시 요약을 놓쳤다. D-022: 정기 슬롯을 5분 유지하며 늦게 완료된 방별 후보를 한 번씩 계획한다. 19시 후보는 중복 억제를 적용해 수동 보충 발송했고 Telegram API 3건 수락을 확인했다. 서버 회귀 207건 통과 및 운영 발송 워커 재시작 완료.
+
+2026-10-06 오후 최신 실기기 장애: 12:00 이후 Telegram 발송이 멈춘 직접 원인은 신규 카카오 알림 수집 중단이었다. 12:55 이후 KakaoTalk wake timer가 기존 요약 없음(`no_sendable_summary`)을 이유로 실행을 건너뛰는 순환을 확인했다. 매시 55분의 승인된 정기 슬롯에서는 요약이 없어도 카카오톡을 깨우고 홈으로 복귀시킨다. D-021과 DEBUG_NOTES를 따른다.
+
+2026-10-06 최신 지시: 폰 UI를 사용하지 않는 v3 headless APK로 교체한다. 모든 운영 제어는 Pi의 ADB CLI로 수행한다. 기존 Android 앱 데이터·방 binding·Keystore 자격 증명은 in-place update로 보존하고, 외부 앱이 명령을 보내지 못하도록 Android DUMP 권한으로 receiver를 제한한다. Pi는 Wi-Fi ADB와 `adb reverse tcp:8443`을 주기적으로 복구하고 대기 업로드를 drain한다. 실기기 수신·서버 저장·Telegram 수락은 각각 별도로 검증한다. D-020을 따른다.
+
 2026-09-29 최신 지시: 기존 Telegram 봇 하나를 유지하고 방 표시명을 Telegram 명령으로 설정한다. forum topic은 `/name 새 이름`, 여러 방이 공유하는 기존 개인 채팅은 `/rooms` 뒤 `/name 방코드 새 이름`을 사용한다. 관리자 Telegram user ID와 목적지/방코드를 검증하며 방/route 이름을 원자적으로 갱신한다. 아직 시작하지 않은 해당 방 outbox만 안전 취소하고 다음 요약 제목에 새 이름을 표시한다. 방마다 새 봇을 만들거나 Telegram PC 앱을 설치하지 않는다. 운영 WSL long polling은 2026-09-29 활성화했다. D-019를 따른다.
 
 2026-09-21 최신 지시: `docs/MULTI_ROOM_TELEGRAM.md`와 D-018을 기준으로 Kakao Radar 2.0 다중 방을 구현한다. Android versionCode 6/versionName 2.0.0은 기존 단일 `room_id`를 보존해 N개 binding 집합으로 승격하고 방별 snapshot/통계/round-robin upload를 사용한다. 서버 2.0.0/schema 6은 방별 상태와 versioned Telegram route를 제공하고, 서로 다른 Kakao 방을 같은 분석 job/outbox/Telegram 메시지에 섞지 않는다. Telegram은 봇 하나와 비공개 forum supergroup 하나를 공유하며 방마다 서로 다른 `message_thread_id`를 사용한다. 기존 1:1 개인 채팅은 topic을 지원하지 않아 단일 방 fallback만 허용한다. 실제 Redmi 설치·N방 장시간 수집·운영 WSL migration·실제 forum topic 수신은 자동 테스트와 별도이며 `docs/V2_MULTI_ROOM_RUNBOOK.md` 순서로 검증한다.

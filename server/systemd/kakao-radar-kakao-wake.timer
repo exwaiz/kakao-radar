@@ -1,5 +1,5 @@
 [Unit]
-Description=Check for a scheduled Kakao Radar delivery one minute ahead
+Description=Wake KakaoTalk five minutes before each Kakao Radar delivery slot
 
 [Timer]
 OnCalendar=*-*-* *:55:00 Asia/Seoul
