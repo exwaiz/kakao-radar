@@ -14,6 +14,8 @@ if (-not $Serial) {
 if ($LASTEXITCODE -ne 0) { throw 'WSL service startup failed' }
 & $AdbPath -s $Serial reverse tcp:8443 tcp:8443
 if ($LASTEXITCODE -ne 0) { throw 'USB forwarding failed' }
-& $AdbPath -s $Serial shell am start -n dev.kakaoradar.collector/.MainActivity
-if ($LASTEXITCODE -ne 0) { throw 'Collector launch failed' }
+& $AdbPath -s $Serial shell am start -W -n dev.kakaoradar.collector/.AdbBootstrapActivity | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Collector bootstrap failed' }
+$status = & $AdbPath -s $Serial shell am broadcast --include-stopped-packages -a dev.kakaoradar.collector.CONTROL -n dev.kakaoradar.collector/.AdbControlReceiver --es command status
+if ($LASTEXITCODE -ne 0 -or (($status -join ' ') -notmatch 'data=')) { throw 'Collector status command failed' }
 Write-Output 'WSL services started; USB HTTPS forwarding restored'

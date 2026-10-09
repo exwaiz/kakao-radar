@@ -9,7 +9,7 @@ User=%i
 RemainAfterExit=yes
 EnvironmentFile=/etc/default/kakao-radar-adb
 ExecStart=/usr/bin/adb start-server
-ExecStartPost=/bin/sh -c 'test -n "$RADAR_ANDROID_SERIAL" && /usr/bin/adb connect "$RADAR_ANDROID_SERIAL" >/dev/null 2>&1 || true'
+ExecStartPost=/bin/sh -c 'if test -n "$RADAR_ANDROID_SERIAL"; then /usr/bin/adb connect "$RADAR_ANDROID_SERIAL" >/dev/null 2>&1 || true; /usr/bin/adb -s "$RADAR_ANDROID_SERIAL" reverse tcp:8443 tcp:8443 >/dev/null 2>&1 || true; fi'
 ExecStop=/bin/sh -c 'test -n "$RADAR_ANDROID_SERIAL" && /usr/bin/adb disconnect "$RADAR_ANDROID_SERIAL" || true'
 ExecStopPost=/usr/bin/adb kill-server
 

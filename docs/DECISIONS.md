@@ -1,5 +1,13 @@
 # Kakao Radar — Decision Log
 
+## D-020 — 화면 없는 Android 수집기와 ADB 운영 명령 (2026-10-06)
+
+- 사용자는 원격 Xiaomi를 직접 조작할 수 없으므로 Android v3에서 launcher Activity를 제거한다. 수집은 기존 NotificationListenerService, Room DB, 방별 ID, 암호화된 기기 토큰을 그대로 보존한다. `adb install -r`로 같은 서명 APK를 업데이트하며 앱 데이터 삭제·방 재선택·토큰 재발급은 하지 않는다.
+- exported `AdbControlReceiver`와 화면 없는 `AdbBootstrapActivity`는 Android의 보호된 `android.permission.DUMP`를 요구한다. ADB shell만 상태·방 선택·수집 on/off·리스너 재연결·즉시 단일 배치 동기화·진단 내보내기·명시적 로컬 삭제를 호출한다. Xiaomi가 cold broadcast를 막으면 CLI가 bootstrap을 실행해 한 번 재시도한다. 인텐트에 원문이나 토큰을 싣지 않고, 반환 데이터에 원문을 넣지 않는다. 방 이름은 사용자가 이전에 허용한 운영 메타데이터로만 `rooms` 조회에 표시한다.
+- 즉시 동기화는 기존 WorkManager 재시도 지연을 기다리지 않고 동일 `SyncEngine`과 방별 round-robin 규칙을 사용한다. Pi CLI의 drain은 단일 배치를 반복하되 실패·진도 없음·상한에서 멈춘다. 모든 서버 업로드는 기존 HTTPS/인증/방 allowlist 계약을 유지한다.
+- Pi는 5분 timer로 승인된 Wi-Fi ADB 연결과 `adb reverse tcp:8443 tcp:8443`을 확인·복구한 뒤 backlog를 drain한다. localhost HTTPS는 계속 Pi loopback에만 수신한다. GUI 없는 앱에서는 KakaoTalk 사전 깨우기 뒤 홈 화면으로 돌아간다.
+- Android 알림 접근을 최초 부여하는 OS 단계는 ADB의 `cmd notification allow_listener`로 수행한다. 같은 패키지 설치와 보존된 권한을 우선하며, 권한 없는 타 기기를 임의로 설정하지 않는다.
+
 ## D-019 — Telegram 토픽 명령으로 방 표시명 설정 (2026-09-29)
 
 - 기존 봇 하나와 D-018의 방별 forum topic route를 그대로 사용한다. 별도 봇을 방마다 만들지 않는다.

@@ -1,4 +1,4 @@
-"""Briefly wake KakaoTalk one minute before a scheduled Telegram digest."""
+"""Briefly wake KakaoTalk five minutes before a scheduled Telegram digest."""
 import argparse
 import json
 import os
@@ -54,6 +54,16 @@ def invoke(adb, serial, activity):
     return result.returncode == 0 and b'Status: ok' in result.stdout
 
 
+def go_home(adb, serial):
+    result = subprocess.run(
+        [adb, '-s', serial, 'shell', 'am', 'start', '-W', '-a',
+         'android.intent.action.MAIN', '-c', 'android.intent.category.HOME'],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        timeout=25, check=False, env=os.environ.copy(),
+    )
+    return result.returncode == 0 and b'Status: ok' in result.stdout
+
+
 def remember_slot(path, slot):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix='.kakao-wake-', dir=path.parent)
@@ -100,8 +110,8 @@ def main():
         return 1
     remember_slot(last_path, due)
     time.sleep(3)
-    if not invoke(args.adb, args.serial, 'dev.kakaoradar.collector/.MainActivity'):
-        print('wake_result=kakao_opened_radar_restore_failed', flush=True)
+    if not go_home(args.adb, args.serial):
+        print('wake_result=kakao_opened_home_restore_failed', flush=True)
         return 1
     print('wake_result=completed', flush=True)
     return 0

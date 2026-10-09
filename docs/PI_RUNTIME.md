@@ -1,6 +1,6 @@
 # Raspberry Pi runtime
 
-This runbook replaces the laptop-specific WSL/Windows deployment. It targets Raspberry Pi OS/Debian 13 on 64-bit ARM. PostgreSQL and the API run on the Pi; the only phone path is Android USB debugging with `adb reverse`. The API binds to `127.0.0.1:8000`, and its local HTTPS endpoint binds to `127.0.0.1:8443`. No router or firewall port is opened.
+This runbook replaces the laptop-specific WSL/Windows deployment. It targets Raspberry Pi OS/Debian 13 on 64-bit ARM. PostgreSQL and the API run on the Pi; the phone connects over authorized Wi-Fi ADB with `adb reverse`. The API binds to `127.0.0.1:8000`, and its local HTTPS endpoint binds to `127.0.0.1:8443`. No router or firewall port is opened.
 
 ## Prepare the Pi
 
@@ -36,13 +36,40 @@ The local database uses PostgreSQL peer authentication and needs no database pas
 
 ## Android over Wi-Fi ADB
 
-Authorize this Pi once over USB, then use Android Wireless debugging pairing (or `adb tcpip` on older devices). Keep the Pi and phone on a network that permits device-to-device traffic and check that `adb devices -l` shows the Wi-Fi transport as `device`. Set `RADAR_ANDROID_SERIAL` to that Wi-Fi serial when USB and Wi-Fi transports are both present. Select the intended KakaoTalk rooms in the app first. Build or copy the debug APK to `android/app/build/outputs/apk/debug/app-debug.apk`, then run:
+Authorize this Pi once over USB, then use Android Wireless debugging pairing (or `adb tcpip` on older devices). Keep the Pi and phone on a network that permits device-to-device traffic and check that `adb devices -l` shows the Wi-Fi transport as `device`. Set `RADAR_ANDROID_SERIAL` to that Wi-Fi serial when USB and Wi-Fi transports are both present. The v3 APK has no launcher Activity. Build it, then update the existing signed installation without deleting app data:
+
+```sh
+cd android && ./gradlew :app:assembleDebug
+adb -s <phone-ip>:<port> install -r app/build/outputs/apk/debug/app-debug.apk
+cd ..
+python3 server/tools/radar_adb.py link --serial <phone-ip>:<port>
+python3 server/tools/radar_adb.py status --serial <phone-ip>:<port>
+```
+
+The same signing certificate is required for an in-place update. The app keeps selected rooms, saved messages, upload queue, and encrypted device credentials. Never uninstall or clear app data to change versions. The Android `AdbControlReceiver` requires the shell-held `DUMP` permission; normal apps cannot call it. If Xiaomi blocks a cold broadcast after an update, the CLI starts a protected, invisible bootstrap Activity and retries automatically.
+
+Use the CLI for all routine controls. `rooms` lists selected and discovered room IDs with names; selection is explicit and pauses collection until the newly selected room is provisioned on the Pi. The commands return JSON without message text or credentials:
+
+```sh
+python3 server/tools/radar_adb.py rooms --serial <phone-ip>:<port>
+python3 server/tools/radar_adb.py room-select <candidate-id> --serial <phone-ip>:<port>
+python3 server/tools/radar_adb.py collection-enable --serial <phone-ip>:<port>
+python3 server/tools/radar_adb.py listener-rebind --serial <phone-ip>:<port>
+python3 server/tools/radar_adb.py listener-reconnect --serial <phone-ip>:<port>
+python3 server/tools/radar_adb.py sync-once --serial <phone-ip>:<port>
+python3 server/tools/radar_adb.py sync-drain --serial <phone-ip>:<port>
+python3 server/tools/radar_adb.py export-diagnostics --output /private/path/diagnostics.jsonl --serial <phone-ip>:<port>
+```
+
+`room-remove`, `collection-disable`, `sync-enable`, and `sync-disable` are also available. `export-messages` writes private chat content to a caller-chosen file with mode 0600; `clear-local --confirm DELETE_LOCAL_DATA` deletes local messages, queue, diagnostics, selected rooms, and sync settings. Use either deliberately. A fresh Android install needs the notification listener grant through `adb shell cmd notification allow_listener dev.kakaoradar.collector/dev.kakaoradar.collector.CollectorService` and an explicit room selection. The existing installation retains its grant and room bindings.
+
+After adding rooms, provision their IDs and existing device credentials with:
 
 ```sh
 sudo env RADAR_ANDROID_SERIAL=<phone-ip>:<port> python3 server/tools/configure_android_usb.py --install
 ```
 
-If multiple phones are connected, set `RADAR_ANDROID_SERIAL` for the command. Provisioning adds only the rooms selected in the app. `adb install -r` updates the APK while preserving its app data; the tool does not clear app storage. `adb reverse tcp:8443 tcp:8443` makes the phone's localhost HTTPS request reach the Pi's loopback listener over the selected ADB transport, including Wi-Fi.
+If multiple phones are connected, set `RADAR_ANDROID_SERIAL` for the command. Provisioning adds only explicitly selected rooms and installs the private one-use sync setup without exposing the token in an Intent. `adb reverse tcp:8443 tcp:8443` makes the phone's localhost HTTPS request reach the Pi's loopback listener over Wi-Fi ADB. `radar_adb.py link` restores this mapping; `kakao-radar-adb-maintain@<linux-user>.timer` checks the connection and drains the queue every five minutes. The timer is installed by `install_pi_android_wake.py` with the wake timer.
 
 ## Analysis and delivery
 
@@ -62,13 +89,13 @@ Retention stays disabled because it removes expired data. There is no retention 
 
 ## Optional Xiaomi KakaoTalk wake before delivery
 
-If Xiaomi delays KakaoTalk notifications until the app opens, the optional wake timer checks five minutes before each hourly delivery slot. It opens KakaoTalk only when there are summaries ready to send, waits three seconds, then returns to Kakao Radar. The phone must remain authorized on Wi-Fi ADB. Install the timer after room provisioning:
+If Xiaomi delays KakaoTalk notifications until the app opens, the optional wake timer checks five minutes before each hourly delivery slot. It opens KakaoTalk only when there are summaries ready to send, waits three seconds, then returns to the home screen. The phone must remain authorized on Wi-Fi ADB. Install the timer after room provisioning:
 
 ```sh
 sudo python3 server/tools/install_pi_android_wake.py --serial <phone-ip>:<port> --adb-user <linux-user-with-authorized-adb-key>
 ```
 
-This writes the non-secret ADB/project settings to `/etc/default/kakao-radar-adb`, enables an ADB server instance for the selected Linux user, and enables the wake timer. The timer can bring KakaoTalk briefly to the foreground; verify that this fits the phone's use. To disable it, run `sudo systemctl disable --now kakao-radar-kakao-wake.timer kakao-radar-adb@<linux-user>.service`.
+This writes the non-secret ADB/project settings to `/etc/default/kakao-radar-adb`, enables an ADB server instance for the selected Linux user, and enables the connection/upload maintenance and wake timers. The wake timer can bring KakaoTalk briefly to the foreground, then returns to the home screen. To disable both, run `sudo systemctl disable --now kakao-radar-kakao-wake.timer kakao-radar-adb-maintain@<linux-user>.timer kakao-radar-adb@<linux-user>.service`.
 
 ## WSL references
 

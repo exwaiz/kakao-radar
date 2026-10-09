@@ -47,15 +47,15 @@ def main():
             # Fresh install has no preferences yet; reuse the already provisioned selection.
             rooms = sorted({str(UUID(room)) for room in json.loads(identity.read_text(encoding="utf-8")).get("rooms", [])})
         else:
-            raise SystemExit("Select the intended Kakao rooms in the Android app before provisioning.")
+            raise SystemExit("Select intended Kakao rooms with radar_adb.py room-select before provisioning.")
     elif identity.exists():
         # Reuse previously selected rooms when a user intentionally removed the old app
         # before installing a differently signed build.
         rooms = sorted({str(UUID(room)) for room in json.loads(identity.read_text(encoding="utf-8")).get("rooms", [])})
     else:
-        raise SystemExit("Install the existing app and select intended Kakao rooms before first provisioning.")
+        raise SystemExit("Install the collector and select intended Kakao rooms with radar_adb.py room-select before first provisioning.")
     if not rooms:
-        raise SystemExit("Select the intended Kakao rooms in the Android app before provisioning.")
+        raise SystemExit("Select intended Kakao rooms with radar_adb.py room-select before provisioning.")
 
     if identity.exists():
         device = json.loads(identity.read_text(encoding="utf-8"))
@@ -92,9 +92,10 @@ def main():
         subprocess.run(target + ["shell", "am", "force-stop", PACKAGE], check=True)
         subprocess.run(target + ["shell", "cmd", "notification", "allow_listener",
                                  PACKAGE + "/dev.kakaoradar.collector.CollectorService"], check=True)
-        subprocess.run(target + ["shell", "am", "start", "-n", PACKAGE + "/.MainActivity"],
-                       check=True, capture_output=True)
-        print("App installed; ADB HTTPS reverse ready.")
+        command = [sys.executable, str(PROJECT_ROOT / "server/tools/radar_adb.py"),
+                   "sync-reload", "--serial", serial, "--adb", adb]
+        subprocess.run(command, check=True)
+        print("Headless app installed; ADB HTTPS reverse ready.")
     else:
         print("Selected room IDs provisioned; no app data was changed.")
 
