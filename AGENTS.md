@@ -6,6 +6,8 @@
 
 ## Current milestone
 
+2026-10-06 오후 최신 실기기 장애: 12:00 이후 Telegram 발송이 멈춘 직접 원인은 신규 카카오 알림 수집 중단이었다. 12:55 이후 KakaoTalk wake timer가 기존 요약 없음(`no_sendable_summary`)을 이유로 실행을 건너뛰는 순환을 확인했다. 매시 55분의 승인된 정기 슬롯에서는 요약이 없어도 카카오톡을 깨우고 홈으로 복귀시킨다. D-021과 DEBUG_NOTES를 따른다.
+
 2026-10-06 최신 지시: 폰 UI를 사용하지 않는 v3 headless APK로 교체한다. 모든 운영 제어는 Pi의 ADB CLI로 수행한다. 기존 Android 앱 데이터·방 binding·Keystore 자격 증명은 in-place update로 보존하고, 외부 앱이 명령을 보내지 못하도록 Android DUMP 권한으로 receiver를 제한한다. Pi는 Wi-Fi ADB와 `adb reverse tcp:8443`을 주기적으로 복구하고 대기 업로드를 drain한다. 실기기 수신·서버 저장·Telegram 수락은 각각 별도로 검증한다. D-020을 따른다.
 
 2026-09-29 최신 지시: 기존 Telegram 봇 하나를 유지하고 방 표시명을 Telegram 명령으로 설정한다. forum topic은 `/name 새 이름`, 여러 방이 공유하는 기존 개인 채팅은 `/rooms` 뒤 `/name 방코드 새 이름`을 사용한다. 관리자 Telegram user ID와 목적지/방코드를 검증하며 방/route 이름을 원자적으로 갱신한다. 아직 시작하지 않은 해당 방 outbox만 안전 취소하고 다음 요약 제목에 새 이름을 표시한다. 방마다 새 봇을 만들거나 Telegram PC 앱을 설치하지 않는다. 운영 WSL long polling은 2026-09-29 활성화했다. D-019를 따른다.

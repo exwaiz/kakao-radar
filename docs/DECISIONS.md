@@ -1,5 +1,11 @@
 # Kakao Radar — Decision Log
 
+## D-021 — 요약 유무와 무관한 정기 KakaoTalk 깨우기 (2026-10-06)
+
+- 사용자가 요청한 매시 정각 발송 5분 전 KakaoTalk 실행은 활성화된 정기 발송 슬롯마다 수행한다. 이미 분석된 요약이나 outbox가 있어야만 깨우는 조건은 제거한다.
+- Xiaomi가 KakaoTalk을 잠재우면 신규 알림 수집이 멈추고 요약도 생기지 않아 기존 조건은 자기 차단을 만들었다. 12:55 이후 `no_sendable_summary` 연속 건너뜀과 수동 KakaoTalk 실행 직후 3건 수집·동기화로 확인했다.
+- 발송 정책이 꺼져 있거나 정기 슬롯 5분 전이 아닌 경우에는 깨우지 않는다. 한 슬롯 한 번 시도와 실행 뒤 홈 화면 복귀를 유지한다. 알림이 없던 시간의 모든 메시지가 복구되는 것으로 간주하지 않는다.
+
 ## D-020 — 화면 없는 Android 수집기와 ADB 운영 명령 (2026-10-06)
 
 - 사용자는 원격 Xiaomi를 직접 조작할 수 없으므로 Android v3에서 launcher Activity를 제거한다. 수집은 기존 NotificationListenerService, Room DB, 방별 ID, 암호화된 기기 토큰을 그대로 보존한다. `adb install -r`로 같은 서명 APK를 업데이트하며 앱 데이터 삭제·방 재선택·토큰 재발급은 하지 않는다.

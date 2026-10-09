@@ -89,7 +89,7 @@ Retention stays disabled because it removes expired data. There is no retention 
 
 ## Optional Xiaomi KakaoTalk wake before delivery
 
-If Xiaomi delays KakaoTalk notifications until the app opens, the optional wake timer checks five minutes before each hourly delivery slot. It opens KakaoTalk only when there are summaries ready to send, waits three seconds, then returns to the home screen. The phone must remain authorized on Wi-Fi ADB. Install the timer after room provisioning:
+If Xiaomi delays KakaoTalk notifications until the app opens, the wake timer runs five minutes before each enabled hourly delivery slot even when no summary exists yet. It opens KakaoTalk, waits three seconds, then returns to the home screen. This lets fresh notifications arrive before analysis and delivery. The phone must remain authorized on Wi-Fi ADB. Install the timer after room provisioning:
 
 ```sh
 sudo python3 server/tools/install_pi_android_wake.py --serial <phone-ip>:<port> --adb-user <linux-user-with-authorized-adb-key>

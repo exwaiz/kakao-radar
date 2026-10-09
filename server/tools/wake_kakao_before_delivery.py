@@ -7,7 +7,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import timedelta
 from uuid import UUID
 
 from pi_paths import DATABASE_URL, STATE_ROOT
@@ -15,12 +14,11 @@ from pi_paths import DATABASE_URL, STATE_ROOT
 SERVER_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SERVER_ROOT))
 
-from radar_server.analysis_store import AnalysisStore
 from radar_server.delivery_store import DeliveryStore
 from radar_server.store import Store
 
 
-def pending_digest(delivery, analysis, device):
+def scheduled_slot(delivery, device):
     with delivery.store.connect() as db:
         delivery._device(db, device)
         _, policy, due = delivery._settings(db, device)
@@ -32,17 +30,9 @@ def pending_digest(delivery, analysis, device):
             return None, "outside_wake_window"
         if due.astimezone(__import__('zoneinfo').ZoneInfo(policy.timezone)).strftime('%H:%M') not in policy.daily_times:
             return None, "not_a_scheduled_slot"
-        profile_version, profile = analysis._profile(db, device)
-        if not profile.enabled:
-            return None, "analysis_disabled"
-        pending = db.execute("""SELECT 1 FROM delivery_outbox WHERE device_id=%s
-            AND status IN ('pending','retry_wait') AND not_before<=%s LIMIT 1""", (device, due)).fetchone()
-        if pending:
-            return due, "pending_outbox"
-        for route in delivery._routes(db, device):
-            if delivery._topics(db, device, policy, profile_version, now, room=route['room_id']):
-                return due, "eligible_summaries"
-    return None, "no_sendable_summary"
+        # Waking KakaoTalk must precede notification capture. Requiring an existing
+        # summary here creates a deadlock when Xiaomi suspends KakaoTalk itself.
+        return due, "scheduled_slot"
 
 
 def invoke(adb, serial, activity):
@@ -92,7 +82,7 @@ def main():
     device = UUID(state['device'])
     store = Store(DATABASE_URL)
     delivery = DeliveryStore(store)
-    due, reason = pending_digest(delivery, AnalysisStore(store), device)
+    due, reason = scheduled_slot(delivery, device)
     if due is None:
         print('wake_skipped=' + reason, flush=True)
         return 0
